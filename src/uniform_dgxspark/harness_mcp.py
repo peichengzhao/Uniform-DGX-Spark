@@ -10,7 +10,9 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
+import webbrowser
 from json import dumps as json_dumps
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -19,6 +21,62 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 
 TERMINAL_STATUSES = {"running", "stopped", "failed", "cancelled"}
 PLUGIN_VERSION = "1.2.2"
+
+# The console is opened once per MCP server process, so the operator can watch
+# what the agent is doing without getting a new browser tab on every tool call.
+CONSOLE_LOCK = threading.Lock()
+CONSOLE_OPENED = False
+_DISABLED_VALUES = {"0", "false", "no", "off"}
+
+
+def log_to_stderr(message: str) -> None:
+    """Diagnostics go to stderr: stdout carries the JSON-RPC stream."""
+    print(f"[uniform-dgxspark] {message}", file=sys.stderr, flush=True)
+
+
+def console_auto_open_enabled() -> bool:
+    """`UNIFORM_AUTO_OPEN_UI=0` keeps the console closed until it is asked for."""
+    return os.environ.get("UNIFORM_AUTO_OPEN_UI", "1").strip().lower() not in _DISABLED_VALUES
+
+
+def console_url(server: "HarnessMCP") -> str:
+    """Console address to open; `UNIFORM_UI_URL` overrides the active endpoint."""
+    override = os.environ.get("UNIFORM_UI_URL", "").strip()
+    return override or f"{server.active_base}/"
+
+
+def open_console(url: str, reason: str) -> bool:
+    """Best-effort browser launch. Never raises, never touches the MCP stream."""
+    try:
+        opened = bool(webbrowser.open(url, new=2))
+    except Exception as error:  # the desktop session may be missing or headless
+        log_to_stderr(f"could not open console ({reason}): {url}: {error!r}")
+        return False
+    result = "opened" if opened else "no browser found"
+    log_to_stderr(f"console ({reason}): {url} -> {result}")
+    return opened
+
+
+def open_console_for_request(server: "HarnessMCP", request: Any) -> None:
+    """Open the console on the first tool call and on every `open_platform_ui`."""
+    global CONSOLE_OPENED
+    if not isinstance(request, dict) or request.get("method") != "tools/call":
+        return
+    params = request.get("params")
+    name = params.get("name") if isinstance(params, dict) else None
+    if not isinstance(name, str) or not name:
+        return
+    if name == "open_platform_ui":
+        # an explicit request always reopens, even when automatic opening is off
+        open_console(console_url(server), "open_platform_ui")
+        return
+    if not console_auto_open_enabled():
+        return
+    with CONSOLE_LOCK:
+        first_call = not CONSOLE_OPENED
+        CONSOLE_OPENED = True
+    if first_call:
+        open_console(console_url(server), f"first tool call: {name}")
 
 
 class HarnessNetworkError(RuntimeError):
@@ -470,7 +528,11 @@ class HarnessMCP:
             True,
             {
                 "url": f"{self.active_base}/",
-                "note": "Open this address in a browser and log in with the platform API key.",
+                "note": (
+                    "Open this address in a browser and log in with the platform API key. "
+                    "The server also opens it automatically when the desktop session allows; "
+                    "set UNIFORM_AUTO_OPEN_UI=0 to disable the automatic opening."
+                ),
             },
         )
 
@@ -680,6 +742,7 @@ def main() -> None:
         while line := sys.stdin.readline(1_000_001):
             if len(line) > 1_000_000:
                 break
+            request: Any = None
             try:
                 request = json.loads(line)
                 response = server.handle(request) if isinstance(request, dict) else None
@@ -691,6 +754,7 @@ def main() -> None:
                 }
             if response is not None:
                 print(json.dumps(response, ensure_ascii=False), flush=True)
+            open_console_for_request(server, request)
     finally:
         server.close()
 

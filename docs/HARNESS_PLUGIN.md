@@ -142,7 +142,7 @@ Windows PowerShell：
 | 工具 | 作用 |
 | --- | --- |
 | `platform_status` | 平台健康检查，返回实际使用的地址 |
-| `open_platform_ui` | 返回平台前端地址 |
+| `open_platform_ui` | 返回平台前端地址，并重新打开浏览器 |
 | `list_catalog_models` / `list_local_models` | 查在线模型 / 本机已下载模型 |
 | `deploy_model` | 创建部署 |
 | `list_deployments` / `get_deployment` / `deployment_logs` | 查部署状态与容器日志 |
@@ -151,6 +151,16 @@ Windows PowerShell：
 | `publish_service` | 发布到局域网，返回 Base URL 与模型 API Key |
 | `publication_status` / `rotate_publication_key` / `unpublish_service` | 发布状态、换 Key、撤销 |
 | `enable_external_access` / `disable_external_access` | 开关该服务的 Cloudflare 外网入口 |
+
+### 前端页面自动打开
+
+Agent 第一次调用任意工具时，插件会用默认浏览器打开平台前端，方便你一边看部署进度、一边
+在页面上补齐工具没覆盖的操作。同一个 MCP 进程内只打开一次；调用 `open_platform_ui` 则每次
+都会重新打开。没有桌面会话时（无头服务器、纯 SSH）静默跳过，只在 stderr 留一行记录，
+不会影响工具结果。
+
+- `UNIFORM_AUTO_OPEN_UI=0`：关闭自动打开，`open_platform_ui` 仍然可用；
+- `UNIFORM_UI_URL`：需要打开其它地址（例如带域名的外网入口）时覆盖默认值。
 
 ## 四、验证与排错
 

@@ -5,7 +5,27 @@ import json
 import httpx
 import pytest
 
+from uniform_dgxspark import harness_mcp
 from uniform_dgxspark.harness_mcp import HarnessMCP, tool_definitions
+
+
+@pytest.fixture(autouse=True)
+def reset_console_state(monkeypatch):
+    monkeypatch.setattr(harness_mcp, "CONSOLE_OPENED", False)
+    monkeypatch.delenv("UNIFORM_AUTO_OPEN_UI", raising=False)
+    monkeypatch.delenv("UNIFORM_UI_URL", raising=False)
+
+
+def record_console(monkeypatch) -> list:
+    opened: list = []
+    monkeypatch.setattr(
+        harness_mcp, "open_console", lambda url, reason: (opened.append((url, reason)), True)[1]
+    )
+    return opened
+
+
+def tool_call(name: str) -> dict:
+    return {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name}}
 
 
 def build(handler) -> HarnessMCP:
@@ -152,3 +172,77 @@ def test_unknown_tool_is_rejected() -> None:
         {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "nope"}}
     )
     assert response["result"]["isError"] is True
+
+
+def test_console_opens_on_the_first_tool_call_only(monkeypatch) -> None:
+    opened = record_console(monkeypatch)
+    mcp = HarnessMCP("http://10.0.0.5:18180", "platform-secret")
+
+    harness_mcp.open_console_for_request(mcp, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    assert opened == []
+
+    harness_mcp.open_console_for_request(mcp, tool_call("platform_status"))
+    harness_mcp.open_console_for_request(mcp, tool_call("list_deployments"))
+    assert opened == [("http://10.0.0.5:18180/", "first tool call: platform_status")]
+
+
+def test_open_platform_ui_reopens_the_console_every_time(monkeypatch) -> None:
+    opened = record_console(monkeypatch)
+    mcp = HarnessMCP("http://10.0.0.5:18180", "platform-secret")
+
+    harness_mcp.open_console_for_request(mcp, tool_call("platform_status"))
+    harness_mcp.open_console_for_request(mcp, tool_call("open_platform_ui"))
+    harness_mcp.open_console_for_request(mcp, tool_call("open_platform_ui"))
+
+    assert [reason for _, reason in opened] == [
+        "first tool call: platform_status",
+        "open_platform_ui",
+        "open_platform_ui",
+    ]
+
+
+def test_auto_open_can_be_disabled_without_losing_the_explicit_tool(monkeypatch) -> None:
+    opened = record_console(monkeypatch)
+    monkeypatch.setenv("UNIFORM_AUTO_OPEN_UI", "0")
+    mcp = HarnessMCP("http://10.0.0.5:18180", "platform-secret")
+
+    harness_mcp.open_console_for_request(mcp, tool_call("platform_status"))
+    harness_mcp.open_console_for_request(mcp, tool_call("deploy_model"))
+    assert opened == []
+
+    harness_mcp.open_console_for_request(mcp, tool_call("open_platform_ui"))
+    assert opened == [("http://10.0.0.5:18180/", "open_platform_ui")]
+
+
+def test_console_url_can_target_another_entry_point(monkeypatch) -> None:
+    opened = record_console(monkeypatch)
+    monkeypatch.setenv("UNIFORM_UI_URL", "https://uniform.example.com/ui")
+    mcp = HarnessMCP("http://10.0.0.5:18180", "platform-secret")
+
+    harness_mcp.open_console_for_request(mcp, tool_call("platform_status"))
+
+    assert opened == [("https://uniform.example.com/ui", "first tool call: platform_status")]
+
+
+def test_console_hook_ignores_malformed_requests(monkeypatch) -> None:
+    opened = record_console(monkeypatch)
+    mcp = HarnessMCP("http://10.0.0.5:18180", "platform-secret")
+
+    for request in (None, {}, "not-a-dict", {"method": "tools/call"}, tool_call("")):
+        harness_mcp.open_console_for_request(mcp, request)
+
+    assert opened == []
+
+
+def test_console_launch_failures_are_reported_but_never_raised(monkeypatch) -> None:
+    def explode(*args, **kwargs):
+        raise RuntimeError("no desktop session")
+
+    monkeypatch.setattr(harness_mcp.webbrowser, "open", explode)
+    assert harness_mcp.open_console("http://10.0.0.5:18180/", "test") is False
+
+    monkeypatch.setattr(harness_mcp.webbrowser, "open", lambda url, new=0: False)
+    assert harness_mcp.open_console("http://10.0.0.5:18180/", "test") is False
+
+    monkeypatch.setattr(harness_mcp.webbrowser, "open", lambda url, new=0: True)
+    assert harness_mcp.open_console("http://10.0.0.5:18180/", "test") is True
