@@ -1,0 +1,96 @@
+{
+  "run": {
+    "id": "e16b302c-e7f9-4000-88ec-02d6cb17279c",
+    "target_type": "deployment",
+    "target_id": "9710812d-1b39-432b-9dfc-d4eb3eb54aaa",
+    "target_label": "阶段 41 真实验收",
+    "model_name": "Qwen3.8-27B-FP8",
+    "service_url": "http://127.0.0.1:8000",
+    "status": "cancelled",
+    "request": {
+      "target_type": "deployment",
+      "target_id": "9710812d-1b39-432b-9dfc-d4eb3eb54aaa",
+      "preset": "custom-objective-v1",
+      "datasets": [
+        {
+          "name": "gsm8k",
+          "subset_list": [
+            "main"
+          ],
+          "limit": 20,
+          "few_shot_num": 0
+        }
+      ],
+      "eval_batch_size": 1,
+      "timeout_seconds": 300,
+      "seed": 42,
+      "generation_config": {
+        "temperature": 0.0,
+        "max_tokens": 2048,
+        "top_p": 1.0
+      },
+      "use_cache": false,
+      "cache_source_run_id": null
+    },
+    "resolved_config": {
+      "datasets": [
+        {
+          "name": "gsm8k",
+          "dataset_id": "AI-ModelScope/gsm8k",
+          "dataset_hub": "modelscope",
+          "dataset_revision": null,
+          "content_hash": null,
+          "evaluation_version": "v1.1",
+          "subset_list": [
+            "main"
+          ],
+          "limit": 20,
+          "few_shot_num": 0,
+          "prompt_hash": "sha256:bda9db92161d70a657dfcc3e61bf4f65bb13aa96b174f006837ce555d339ea4e"
+        }
+      ],
+      "generation_config": {
+        "temperature": 0.0,
+        "max_tokens": 2048,
+        "top_p": 1.0
+      },
+      "eval_batch_size": 1,
+      "timeout_seconds": 300,
+      "seed": 42,
+      "deployment_snapshot": {
+        "target_type": "deployment",
+        "target_id": "9710812d-1b39-432b-9dfc-d4eb3eb54aaa",
+        "status": "running",
+        "model_id": "Qwen3.8-27B-FP8",
+        "revision": null,
+        "served_model_name": "Qwen3.8-27B-FP8",
+        "port": 8000
+      }
+    },
+    "progress": {
+      "phase": "cancelled",
+      "processed_samples": 0,
+      "total_samples": 0,
+      "percent": 0.0,
+      "current_dataset": null,
+      "message": "Evaluation cancelled"
+    },
+    "summary": null,
+    "metrics": [],
+    "evalscope_version": "0.0.0_dev",
+    "evalscope_commit": "ccb9019ff56fd7dcc8602f4d17b706b31228edca",
+    "run_directory": "/tmp/pytest-of-dgx-spark/pytest-73/test_real_model_running_cancel0/isolated-data/accuracy-runs/2f294e77-58f8-4fcc-ba96-f1d6ecc78c1d",
+    "pid": null,
+    "error": null,
+    "created_at": "2026-10-22T07:13:40.881051Z",
+    "started_at": "2026-10-22T07:13:41.581390Z",
+    "finished_at": "2026-10-22T07:13:41.633842Z",
+    "updated_at": "2026-10-22T07:13:41.633842Z",
+    "evaluation_fingerprint": "sha256:c7b1152371dbc77222035b9cbb8c19271f76c8e562b46f0a437ce47c8d968012",
+    "cache_fingerprint": "sha256:0a0d62ee8a8bebd15d979c0d69f35c24e655d920d5939edced3fc4bda7edb72b",
+    "cached_samples": 0
+  },
+  "started_pid": 257,
+  "process_returncode": -15,
+  "model_still_accessible": true
+}

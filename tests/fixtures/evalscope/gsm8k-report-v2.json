@@ -1,0 +1,79 @@
+{
+  "schema_version": 2,
+  "name": "stage-36-fixture-model@gsm8k",
+  "dataset_name": "gsm8k",
+  "dataset_pretty_name": "GSM8K",
+  "dataset_description": "Sanitized stage-36 compatibility fixture.",
+  "model_name": "stage-36-fixture-model",
+  "metrics": [
+    {
+      "identity": {
+        "name": "accuracy",
+        "aggregation": "mean",
+        "dimensions": {}
+      },
+      "legacy_name": null,
+      "num": 2,
+      "score": 1.0,
+      "macro_score": 1.0,
+      "categories": [
+        {
+          "name": [
+            "default"
+          ],
+          "num": 2,
+          "score": 1.0,
+          "macro_score": 1.0,
+          "subsets": [
+            {
+              "name": "main",
+              "score": 1.0,
+              "num": 2,
+              "metadata": null,
+              "is_aggregate": false
+            }
+          ]
+        }
+      ],
+      "semantics": {
+        "semantic_id": "quality.accuracy.ratio",
+        "metric_name": "Accuracy",
+        "display_name": null,
+        "kind": "quality",
+        "direction": "higher_is_better",
+        "raw_unit": null,
+        "value_range": {
+          "min": 0.0,
+          "max": 1.0
+        },
+        "display_kind": "percent",
+        "display_multiplier": 100.0,
+        "display_unit": "%",
+        "display_precision": 1
+      }
+    }
+  ],
+  "analysis": "N/A",
+  "perf_metrics": null,
+  "primary_metric_identity": {
+    "name": "accuracy",
+    "aggregation": "mean",
+    "dimensions": {}
+  },
+  "primary_metric_unavailable_reason": null,
+  "judge_summary": null,
+  "execution_summary": {
+    "requested": 2,
+    "succeeded": 2,
+    "errored": 0,
+    "incomplete": false,
+    "subsets": {
+      "main": {
+        "requested": 2,
+        "succeeded": 2,
+        "errored": 0
+      }
+    }
+  },
+  "num": 2
+}

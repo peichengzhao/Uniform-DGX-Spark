@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "uniform-dgxspark"
+version = "0.1.0"
+description = "Local vLLM deployment manager for NVIDIA DGX Spark"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.116,<0.117",
+  "huggingface-hub[hf-xet]>=0.34,<0.35",
+  "httpx>=0.28,<0.29",
+  "modelscope-hub>=0.3,<0.4",
+  "psutil>=7.0,<8",
+  "uvicorn[standard]>=0.35,<0.36",
+]
+
+[project.scripts]
+uniform-harness-mcp = "uniform_dgxspark.harness_mcp:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.4,<8.5",
+  "ruff>=0.12,<1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = ["src/uniform_dgxspark/benchmark_reference"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["B008"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/uniform_dgxspark"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]

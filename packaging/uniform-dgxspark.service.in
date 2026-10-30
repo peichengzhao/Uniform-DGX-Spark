@@ -1,0 +1,17 @@
+[Unit]
+Description=Uniform DGX Spark local model console
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@PROJECT_DIR@
+Environment=UNIFORM_HOST=127.0.0.1
+Environment=UNIFORM_PORT=18180
+Environment=UNIFORM_CLOUDFLARED_BINARY=@PROJECT_DIR@/.runtime/bin/cloudflared
+ExecStart=@PROJECT_DIR@/scripts/run-local.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

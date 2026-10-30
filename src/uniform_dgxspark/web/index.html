@@ -1,0 +1,790 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Uniform · DGX Spark</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/static/app.css?v=20261027-feishu-pkce">
+    <link rel="stylesheet" href="/static/vendor/node_modules/@xterm/xterm/css/xterm.css">
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar" data-ui-id="shell.sidebar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" role="img">
+              <path d="M8 7v10c0 5 3.1 8 8 8s8-3 8-8V7"/>
+              <path d="M12 7v10c0 2.7 1.3 4 4 4s4-1.3 4-4V7"/>
+            </svg>
+          </span>
+          <div class="brand-name"><strong>Uniform</strong><small>DGX SPARK · CONSOLE</small></div>
+        </div>
+        <nav>
+          <button class="nav-item active" data-ui-id="navigation.deployments" data-view="deployments">部署中心</button>
+          <button class="nav-item" data-ui-id="navigation.catalog" data-view="catalog">模型中心</button>
+          <button class="nav-item" data-ui-id="navigation.ai-sessions" data-view="ai-sessions">AI 会话</button>
+          <button class="nav-item" data-ui-id="navigation.system" data-view="system">系统监控</button>
+          <button class="nav-item" data-ui-id="navigation.arena" data-view="arena">性能评测</button>
+          <button class="nav-item" data-ui-id="navigation.accuracy" data-view="accuracy">精度评测</button>
+        </nav>
+        <div class="sidebar-ui-editor-slot">
+          <div id="ui-editor-toolbar" class="ui-editor-toolbar" data-ui-editor>
+            <button id="ui-edit-toggle" type="button" class="secondary" aria-pressed="false">编辑 UI</button>
+            <span id="ui-edit-toolbar-status">右键批注界面</span>
+            <button id="ui-edit-screenshot" type="button" class="secondary">截图批注</button>
+            <button id="ui-edit-history" type="button" class="secondary">执行记录</button>
+            <button id="ui-edit-undo" type="button" class="secondary" hidden>撤销上次修改</button>
+          </div>
+        </div>
+        <div class="connection" title="浏览器与本机 Uniform 后端的连接状态，与模型服务是否运行无关"><span id="connection-dot"></span><span id="connection-text">正在连接平台</span></div>
+      </aside>
+
+      <main>
+        <header data-ui-id="shell.header">
+          <div>
+            <p class="eyebrow">LOCAL INFERENCE CONTROL PLANE</p>
+            <h1 id="page-title">部署中心</h1>
+          </div>
+          <button id="open-deploy" class="primary">部署模型</button>
+        </header>
+
+        <section id="view-deployments" class="view active" data-ui-id="page.deployments">
+          <div class="summary-grid">
+            <article><span>服务运行中</span><strong id="running-count">0</strong><small>OpenAI-compatible endpoints</small></article>
+            <article><span>进行中的任务</span><strong id="active-count">0</strong><small>下载、加载与检查</small></article>
+            <article><span>需要处理</span><strong id="failed-count">0</strong><small>部署失败或服务异常</small></article>
+          </div>
+          <div class="section-heading">
+            <div><h2>模型服务与部署任务</h2><p>托管任务和 AI 自主部署的服务状态都会实时更新，关闭页面不会中断任务。</p></div>
+            <div class="section-actions"><label class="inline-check"><input id="show-archived-services" type="checkbox">显示已存档</label><button id="refresh-deployments" class="secondary">刷新</button></div>
+          </div>
+          <div id="deployment-list" class="deployment-list"></div>
+          <div id="empty-deployments" class="empty-state">
+            <div class="empty-icon">◇</div><h3>还没有模型服务</h3><p>从一个本地模型目录或模型库开始部署。</p>
+          </div>
+          <div class="deployment-delight-row">
+            <div class="nvidia-platform-signature" aria-label="NVIDIA DGX Spark">
+              <div class="nvidia-platform-glow" aria-hidden="true"></div>
+              <svg class="nvidia-eye" viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M1.67 7.26S3.11 5.13 6 4.91v-.78C2.8 4.39.03 7.1.03 7.1S1.6 11.64 6 12.05v-.82c-3.23-.41-4.33-3.97-4.33-3.97ZM6 9.59v.76C3.56 9.91 2.88 7.37 2.88 7.37S4.05 6.08 6 5.86v.83a1.76 1.76 0 0 0-1.82.83S4.62 9.13 6 9.59ZM6 3v1.13l.28-.01c3.64-.12 6.01 2.98 6.01 2.98s-2.72 3.31-5.56 3.31c-.26 0-.5-.02-.73-.06v.88c.2.03.4.04.61.04 2.64 0 4.55-1.35 6.4-2.94.3.24 1.56.84 1.81 1.1-1.75 1.47-5.85 2.66-8.17 2.66-.22 0-.44-.02-.65-.04V13h10V3Zm0 2.86V4.91l.28-.02c2.62-.08 4.33 2.25 4.33 2.25S8.76 9.72 6.77 9.72c-.28 0-.54-.05-.77-.13v-2.9c1.02.13 1.22.58 1.84 1.6L9.2 7.14S8.2 5.83 6.53 5.83c-.18 0-.36.01-.53.03Z"/>
+              </svg>
+              <div class="nvidia-platform-copy">
+                <span>ACCELERATED BY</span>
+                <strong>NVIDIA</strong>
+              </div>
+              <span class="nvidia-platform-divider" aria-hidden="true"></span>
+              <div class="nvidia-platform-product">
+                <strong>DGX <span>SPARK</span></strong>
+                <small>PERSONAL AI SUPERCOMPUTER</small>
+              </div>
+            </div>
+            <button id="dog-fireworks" class="dog-fireworks-button" type="button" aria-label="点击狗头放烟花">
+              <span class="dog-portrait" aria-hidden="true">🐶</span>
+              <span class="dog-button-copy"><strong>点我放烟花</strong><small>给部署中心加点火花</small></span>
+              <span class="dog-sparkle dog-sparkle-one" aria-hidden="true">✦</span>
+              <span class="dog-sparkle dog-sparkle-two" aria-hidden="true">✧</span>
+            </button>
+          </div>
+          <canvas id="fireworks-canvas" class="fireworks-canvas" aria-hidden="true"></canvas>
+        </section>
+
+        <section id="view-catalog" class="view" data-ui-id="page.catalog">
+          <div class="section-tabs" role="tablist" aria-label="模型中心">
+            <button class="section-tab active" type="button" data-model-panel="online">在线模型</button>
+            <button class="section-tab" type="button" data-model-panel="local">本地模型</button>
+          </div>
+          <div id="model-panel-online" class="workspace-panel active">
+            <div class="section-heading"><div><h2>在线模型</h2><p>搜索和浏览可部署的开源模型，支持按热度、发布时间和下载量排序。</p><small id="catalog-sync-status"></small></div><button id="refresh-catalog" class="secondary">立即同步热门模型</button></div>
+            <div class="search-row"><select id="catalog-source"><option value="all">全部模型</option><option value="huggingface">Hugging Face</option><option value="modelscope">ModelScope</option></select><select id="catalog-compatibility"><option value="likely">推荐用于 vLLM</option><option value="deployable">推荐与需验证</option><option value="experimental">需验证</option><option value="">全部模型</option></select><select id="catalog-sort" aria-label="模型排序"><option value="popularity">近期热度</option><option value="recent">发布时间（最新）</option><option value="downloads">下载量（最多）</option><option value="likes">点赞数（最多）</option><option value="name">模型名称</option></select><input id="catalog-search" placeholder="输入模型名称、发布厂商或关键词"><button id="search-catalog" class="primary">在线搜索</button></div>
+            <div id="catalog-list" class="catalog-grid"></div>
+            <div id="catalog-placeholder" class="empty-state"><div class="empty-icon">⌕</div><h3>搜索模型</h3><p>输入名称、发布厂商或关键词开始搜索。</p></div>
+          </div>
+
+          <div id="model-panel-local" class="workspace-panel">
+            <div class="section-heading"><div><h2>本地模型</h2><p>只读扫描已添加的权重目录，查看模型配置、量化方式、文件完整性和空间占用。</p></div><button id="refresh-local-models" class="secondary">刷新模型</button></div>
+            <form id="local-model-root-form" class="directory-form"><input name="path" required placeholder="输入绝对目录，例如 /data/models"><button class="primary" type="submit">添加目录</button></form>
+            <div id="local-model-roots" class="root-list"></div>
+            <div id="local-model-summary" class="image-summary"></div>
+            <div id="local-model-errors"></div>
+            <div id="local-model-list" class="local-model-grid"></div>
+            <div id="empty-local-models" class="empty-state"><div class="empty-icon">◫</div><h3>还没有本地模型</h3><p>添加一个包含模型权重子目录的绝对路径。</p></div>
+
+            <details id="image-panel" class="secondary-panel">
+              <summary><strong>本地 Docker 镜像</strong><span>辅助查看部署可复用的镜像</span></summary>
+              <div class="section-heading compact-heading"><div><h2>镜像列表</h2><p>按需检查本机已有镜像，不作为主要工作入口。</p></div><button id="refresh-images" class="secondary">刷新镜像</button></div>
+              <div class="search-row"><input id="image-search" placeholder="按仓库、标签或镜像 ID 筛选"><select id="image-sort" aria-label="镜像排序"><option value="name-asc">名称 A–Z</option><option value="name-desc">名称 Z–A</option><option value="size-desc">大小：从大到小</option><option value="size-asc">大小：从小到大</option><option value="time-desc">时间：从新到旧</option><option value="time-asc">时间：从旧到新</option></select><label class="check inline-check"><input id="vllm-images-only" type="checkbox"><span>仅 vLLM</span></label></div>
+              <div id="image-summary" class="image-summary"></div>
+              <div class="image-table-wrap"><div class="image-list-header"><span>镜像名称</span><span>镜像 ID</span><span>大小</span><span>创建时间</span><span>容器</span><span>类型</span><span></span></div><div id="image-list" class="image-list"></div></div>
+              <div id="empty-images" class="empty-state"><div class="empty-icon">⬡</div><h3>没有匹配的本地镜像</h3><p>部署时填写远程镜像，平台会自动拉取。</p></div>
+            </details>
+          </div>
+        </section>
+
+        <section id="view-system" class="view" data-ui-id="page.system">
+          <div class="section-heading"><div><h2>系统资源</h2><p>DGX Spark 统一内存、GPU、CPU、磁盘和网络。</p></div><button id="refresh-system" class="secondary">立即刷新</button></div>
+          <div id="system-metrics" class="metric-grid"><div class="empty-state compact">正在读取系统指标…</div></div>
+          <section class="feishu-notifications" aria-labelledby="feishu-heading">
+            <div class="section-heading"><div><h2 id="feishu-heading">飞书机器人私聊告警</h2><p>后台持续监控；关闭浏览器不影响告警。扫码只绑定收件人，消息由机器人发送。</p></div><span id="feishu-status" role="status">正在读取…</span></div>
+            <details class="network-glossary" id="feishu-setup-guide">
+              <summary>没有飞书应用？查看首次配置步骤</summary>
+              <ol>
+                <li>进入 <a href="https://open.feishu.cn/app" target="_blank" rel="noopener noreferrer">飞书开发者后台</a>，创建企业自建应用，例如“DGX Spark 资源告警”。需要在自己的飞书组织中创建；组织限制时请联系管理员。</li>
+                <li>添加“机器人”能力，并开通应用身份权限 <code>im:message:send_as_bot</code>；不需要申请读取聊天、手机、邮箱或以用户身份发消息的权限。</li>
+                <li>在“安全设置 → 重定向 URL”中添加下方完整回调地址，发布版本并确认应用可用范围包含你。组织要求审批时需由管理员审核。</li>
+                <li>把 App ID 和 App Secret 填到此处并保存。从与回调地址相同的平台地址打开页面，点击【扫码绑定我的飞书】，在飞书官方授权页扫码、同意后返回平台。</li>
+                <li>打开与机器人的私聊，不要屏蔽机器人。点击【发送测试消息】，确认收到后再勾选“开启自动告警”并保存。</li>
+              </ol>
+              <p>扫码不会自动创建应用。使用飞书当前官方授权页，不使用旧版内嵌二维码 SDK，也不代替你登录飞书或申请权限。</p>
+            </details>
+            <form id="feishu-form">
+              <div class="form-grid">
+                <label>App ID<input name="app_id" maxlength="128" placeholder="cli_…" autocomplete="off"></label>
+                <label>App Secret<input name="app_secret" type="password" maxlength="4096" placeholder="首次填写；已保存时留空保留" autocomplete="new-password"></label>
+                <label class="feishu-wide">授权回调地址<input name="redirect_uri" maxlength="2048" placeholder="http://127.0.0.1:18180/integrations/feishu/callback" autocomplete="off"></label>
+              </div>
+              <p class="node-help">密钥仅保存在本机权限受限的私有文件中，不回传到浏览器；不是加密存储。请在本机地址或 HTTPS 页面配置。修改应用凭证或回调地址后需重新绑定、测试。</p>
+              <div class="feishu-options"><label class="inline-check"><input name="enabled" type="checkbox">开启自动告警</label><label class="inline-check"><input name="notify_recovery" type="checkbox">发送恢复通知</label><label class="inline-check"><input name="include_remote_nodes" type="checkbox">包含已添加的远端节点</label></div>
+              <p class="node-help">以下阈值是可编辑示例，不是硬件安全上限；CPU/GPU 高占用默认不告警，避免正常评测刷屏。缺失或过期指标不会当成 0，也不会触发假恢复。持续时间与提醒间隔单位均为秒。</p>
+              <div id="feishu-rules" class="feishu-rules"></div>
+              <p id="feishu-recipient" class="node-help">尚未绑定接收人。</p>
+              <div id="feishu-error" class="form-error" role="alert"></div>
+              <details id="feishu-binding-diagnostic" class="network-glossary" hidden><summary id="feishu-binding-summary">最近绑定诊断</summary><pre id="feishu-binding-details"></pre></details>
+              <div class="section-actions feishu-actions"><button id="feishu-save" class="primary" type="submit">保存配置</button><button id="feishu-bind" class="secondary" type="button" disabled>扫码绑定我的飞书</button><button id="feishu-test" class="secondary" type="button" disabled>发送测试消息</button><button id="feishu-unbind" class="secondary" type="button" disabled>解绑并关闭告警</button></div>
+            </form>
+            <h3>最近告警与发送记录</h3><div id="feishu-events" class="feishu-events"><div class="empty-state compact">尚无通知记录。</div></div>
+          </section>
+          <div class="section-heading cluster-heading"><div><h2>多机资源与 ConnectX-7</h2><p>DGX Spark 的 CPU 与 GPU 共用统一内存池；多机卡片只展示统一内存占用与 RDMA 链路，本机上方实时监控优先级更高。</p></div></div>
+          <form id="ssh-node-form" class="node-form">
+            <input name="label" placeholder="节点名称（可选）">
+            <input name="host" required placeholder="SSH 主机名或当前 IP">
+            <input name="username" required placeholder="SSH 用户名">
+            <input name="port" type="number" min="1" max="65535" value="22" required aria-label="SSH 端口">
+            <button class="primary" type="submit">添加节点</button>
+          </form>
+          <small class="node-help">使用本机 SSH Key/ssh-agent 和 known_hosts；不保存密码。IP、接口和容器名称按实时结果刷新。</small>
+          <details class="network-glossary">
+            <summary>网络术语说明</summary>
+            <dl>
+              <div><dt>CX-7 / ConnectX-7</dt><dd>NVIDIA 高速网卡，本机链路最高协商为 200 Gb/s。</dd></div>
+              <div><dt>RDMA</dt><dd>Remote Direct Memory Access，远程直接内存访问，可减少 CPU 参与和数据复制。</dd></div>
+              <div><dt>RoCE</dt><dd>RDMA over Converged Ethernet，在以太网上承载 RDMA；当前设备名通常以 roce 开头。</dd></div>
+              <div><dt>MTU</dt><dd>Maximum Transmission Unit，单个网络包的最大长度；9000 表示启用了 Jumbo Frame（巨型帧）。</dd></div>
+              <div><dt>Gb/s</dt><dd>Gigabits per second，链路理论速率；200 Gb/s 不等于应用一定能达到 200 Gb/s。</dd></div>
+              <div><dt>RX / TX</dt><dd>Receive / Transmit，当前采样周期内的接收与发送速率。</dd></div>
+              <div><dt>错误 / 重传</dt><dd>驱动启动以来的累计计数；单个非零值不代表当前仍有故障，应观察是否持续增长。</dd></div>
+              <div><dt>GPU 核心利用率</dt><dd>GPU 计算单元在采样周期内处于忙碌状态的比例，不代表显存容量占用。</dd></div>
+              <div><dt>显存带宽利用率</dt><dd>GPU 内存控制器的忙碌比例，不是已使用显存容量百分比。</dd></div>
+              <div><dt>统一内存</dt><dd>DGX Spark 的 CPU 与 GPU 共享系统内存。页面按系统统计显示整个共享池的已用量、总量、占比和可用量，不等同于单个模型的 GPU 分配。</dd></div>
+              <div><dt>容器内存</dt><dd>Docker cgroup 统计的容器内存使用量，不等同于该容器独占的 GPU 显存。</dd></div>
+            </dl>
+          </details>
+          <div id="cluster-summary" class="image-summary"></div>
+          <div id="cluster-nodes" class="cluster-node-list"><div class="empty-state compact">正在探测节点…</div></div>
+        </section>
+
+        <section id="view-arena" class="view" data-ui-id="page.performance">
+          <div id="performance-panel-benchmark" class="workspace-panel active">
+          <div class="benchmark-method-tabs" role="tablist" aria-label="选择评测方式">
+            <button class="benchmark-method-tab active" type="button" role="tab" aria-selected="true" aria-controls="benchmark-method-arena" data-benchmark-method="arena"><strong>Spark Arena 对标评测</strong><span>标准口径 · 榜单可比</span></button>
+            <button class="benchmark-method-tab" type="button" role="tab" aria-selected="false" aria-controls="benchmark-method-custom" data-benchmark-method="custom"><strong>自定义性能测试</strong><span>灵活配置 · 压力探索</span></button>
+          </div>
+          <div id="benchmark-method-arena" class="benchmark-method-panel active" role="tabpanel">
+          <div class="section-heading"><div><h2>Spark Arena 对标评测</h2><p>使用 llama-benchy 0.4.0 按 Spark Arena 口径测试本地 OpenAI 兼容服务，并与榜单结果计算差距。</p></div><button id="refresh-arena" class="secondary">刷新结果</button></div>
+          <details class="network-glossary arena-metric-glossary">
+            <summary>评测指标如何理解</summary>
+            <dl>
+              <div><dt>TTFT P50 / P99</dt><dd>从发出请求到首个 token 的中位数和尾延迟，包含排队与 Prefill；交互体验首先看它。</dd></div>
+              <div><dt>TPOT P50 / P99</dt><dd>首 token 之后每生成一个 token 的时间。当前只在单并发时从每轮 Decode 吞吐可靠换算。</dd></div>
+              <div><dt>Prefill 吞吐</dt><dd>处理输入 Prompt 的 token/s，受输入长度、Prefix Cache 和批处理影响。</dd></div>
+              <div><dt>Decode / Output 吞吐</dt><dd>生成输出 token 的持续吞吐。并发时是服务聚合吞吐，不等于单用户速度。</dd></div>
+              <div><dt>峰值 Decode</dt><dd>短时间窗口内的最高生成速率，适合诊断突发能力，不应代替稳定 Decode 成绩。</dd></div>
+              <div><dt>均值 ± 标准差</dt><dd>多轮结果平均值及离散程度；标准差越小，结果通常越稳定，它不是 P99 或误差上限。</dd></div>
+              <div><dt>投机接受率</dt><dd>评测期间 accepted draft tokens ÷ proposed draft tokens；越高不必然越快，还需考虑 draft 开销。</dd></div>
+            </dl>
+          </details>
+          <div class="arena-config-launcher">
+            <div class="arena-config-launcher-icon" aria-hidden="true">↗</div>
+            <div><strong>准备一次标准对标评测</strong><span>选择本地服务、测试参数与 Spark Arena 榜单基线</span></div>
+            <div class="arena-default-chips" aria-label="默认评测参数"><span>pp 2048</span><span>tg 128</span><span>并发 1</span><span>7 轮</span></div>
+            <button id="open-arena-config" type="button" class="primary">配置并开始评测</button>
+          </div>
+          <dialog id="arena-config-dialog" class="arena-config-dialog">
+          <form id="arena-form" class="arena-form" method="dialog">
+            <div class="dialog-head">
+              <div><p class="eyebrow">SPARK ARENA BENCHMARK</p><h2>配置对标评测</h2><p>选择运行中的服务并确认测试口径，启动后可在评测记录中查看进度。</p></div>
+              <button type="button" class="icon-button" data-arena-config-close aria-label="关闭">×</button>
+            </div>
+            <div class="form-grid">
+              <label>本地模型服务<select name="target" id="arena-target" required><option value="">选择运行中的服务</option></select></label>
+              <label>Tokenizer 本地目录或 Hugging Face ID<input name="tokenizer" list="arena-tokenizer-options" required placeholder="/home/zaki/model/... 或 org/model"><datalist id="arena-tokenizer-options"></datalist></label>
+              <label>报告模型名称 <small>显示在结果中；留空使用部署名称</small><input name="report_model_name" placeholder="例如 GLM-5.3-Flash-EXL3-TR3-4bpw"></label>
+              <label>Served model name <small>留空则从 /v1/models 自动读取</small><input name="served_model_name" placeholder="例如 GLM-5.3-Flash-EXL3"></label>
+              <label>Prompt 长度（pp）<input name="pp" type="number" value="2048" min="1" max="131072" required></label>
+              <label>生成长度（tg）<input name="tg" type="number" value="128" min="1" max="8192" required></label>
+              <label>上下文深度（depth）<input name="depth" type="number" value="16384" min="0" max="131072" required></label>
+              <label>并发数<input name="concurrency" type="number" value="1" min="1" max="64" required></label>
+              <label>重复次数（runs）<input name="runs" type="number" value="7" min="1" max="50" required></label>
+              <label>API Key 环境变量 <small>只保存变量名，不保存密钥</small><input name="api_key_env" placeholder="例如 OPENAI_API_KEY"></label>
+            </div>
+            <div class="arena-options">
+              <label class="check"><input name="enable_prefix_caching" type="checkbox" checked><span>启用 Prefix Cache（榜单默认）</span></label>
+              <label class="check"><input name="exact_tg" type="checkbox"><span>强制生成准确 tg 长度</span></label>
+              <label class="check"><input name="sglang_compatibility" type="checkbox"><span>SGLang 兼容：return_token_ids=false</span></label>
+            </div>
+            <div class="arena-baseline-picker">
+              <label>Spark Arena 榜单基线 <small>可选；搜索并选择同模型/集群条目</small><input id="arena-leaderboard-search" type="search" placeholder="输入模型名，例如 GLM-5.3-Flash"></label>
+              <button id="search-arena-leaderboard" type="button" class="secondary">搜索榜单</button>
+              <label>匹配结果<select name="leaderboard_benchmark_id" id="arena-leaderboard"><option value="">不比较榜单</option></select></label>
+            </div>
+            <div id="arena-baseline-detail" class="arena-baseline-detail">未选择榜单基线。选择后将核对 pp、tg、depth、并发以及榜单运行环境。</div>
+            <div id="arena-form-error" class="form-error"></div>
+            <div class="dialog-actions"><button type="button" class="secondary" data-arena-config-close>取消</button><button id="start-arena" type="submit" class="primary">开始正式评测</button></div>
+          </form>
+          </dialog>
+          <div class="section-heading"><div><h2>评测记录</h2><p>正数差距表示本地更优；吞吐越高越好，TTFR 越低越好。</p></div></div>
+          <div id="arena-run-list" class="benchmark-list"></div>
+          <div id="empty-arena-runs" class="empty-state"><div class="empty-icon">△</div><h3>还没有 Arena 评测</h3><p>选择一个已运行且验证通过的本地服务开始测试。</p></div>
+          </div>
+          <div id="benchmark-method-custom" class="benchmark-method-panel" role="tabpanel">
+            <div class="section-heading"><div><h2>自定义性能测试</h2><p>灵活配置接口、输入输出长度、并发和请求数，观察吞吐、成功率与延迟分位数。</p></div><button id="refresh-benchmarks" type="button" class="secondary">刷新结果</button></div>
+            <div class="custom-benchmark-launcher">
+              <label>本地模型服务<select id="custom-benchmark-target" required><option value="">选择运行中的服务</option></select></label>
+              <button id="open-custom-benchmark" type="button" class="primary">让 AI 规划并评测</button>
+            </div>
+            <div class="security-notice compact"><strong>AI 自适应评测</strong><span>平台会把当前模型服务、部署参数、容器信息和硬件快照同步给 AI。AI 从内置的 Atlas、SGLang 与 vLLM 参考代码中选择并调整方案，实时展示命令、日志和结果。</span></div>
+            <div class="section-heading compact-heading"><div><h2>AI 自适应评测记录</h2><p>这里只展示评测状态和结构化结果；原始执行过程与人工干预统一进入独立的 AI 会话页面。</p></div></div>
+            <div id="ai-benchmark-list" class="benchmark-list"></div>
+            <div id="empty-ai-benchmarks" class="empty-state compact"><p>还没有 AI 自适应评测记录。</p></div>
+            <details class="secondary-panel legacy-benchmark-panel">
+              <summary><strong>旧版固定请求测试记录</strong><span>保留已有结果，仅用于历史追溯</span></summary>
+              <div id="benchmark-list" class="benchmark-list"></div>
+              <div id="empty-benchmarks" class="empty-state compact"><p>没有旧版固定测试记录。</p></div>
+            </details>
+          </div>
+          </div>
+        </section>
+
+        <section id="view-accuracy" class="view" data-ui-id="page.accuracy">
+          <div class="workflow-hero accuracy-hero">
+            <div><p class="eyebrow">MODEL QUALITY EVALUATION</p><h2>模型精度评测</h2><p>使用固定版本 EvalScope，在统一数据集与提示词契约下评测运行中的本地模型服务。</p></div>
+            <span>EvalScope · 可复现</span>
+          </div>
+          <div id="accuracy-unavailable" class="accuracy-unavailable" hidden></div>
+          <div class="accuracy-launcher">
+            <div class="accuracy-launcher-copy"><strong>开始一次客观能力评测</strong><span>选择运行中的模型服务，再确认数据集、样本数与生成参数。</span></div>
+            <label>本地模型服务<select id="accuracy-target"><option value="">选择运行中的服务</option></select></label>
+            <div class="accuracy-launch-actions"><button id="open-ai-accuracy" type="button" class="primary">AI 一键评测</button><button id="open-accuracy-config" type="button" class="secondary">手动配置</button></div>
+          </div>
+          <section class="accuracy-dataset-center" aria-labelledby="accuracy-dataset-heading">
+            <div class="section-heading"><div><h2 id="accuracy-dataset-heading">评测数据集</h2><p>像挑选模型一样选择评测集。已接入可配置评测；尚未接入可启动 AI 接入检查，验证成功后才允许评测。</p></div></div>
+            <p id="accuracy-dataset-source" class="accuracy-dataset-source">正在读取固定版本 EvalScope 数据集目录…</p>
+            <div class="accuracy-dataset-filters">
+              <label>搜索数据集<input id="accuracy-dataset-search" type="search" placeholder="名称、能力、数据源或子集"></label>
+              <label>接入状态<select id="accuracy-dataset-status"><option value="all">全部数据集</option><option value="integrated">平台已接入</option><option value="pending">尚未接入</option></select></label>
+              <label>模型类型<select id="accuracy-dataset-category"><option value="all">全部类型</option><option value="llm">文本模型</option><option value="vlm">多模态模型</option><option value="agent">智能体</option><option value="aigc">内容生成</option><option value="other">其他</option></select></label>
+              <label>评测能力<select id="accuracy-dataset-tag"><option value="all">全部能力</option></select></label>
+            </div>
+            <p id="accuracy-dataset-count" class="accuracy-dataset-source" role="status" aria-live="polite"></p>
+            <div id="accuracy-dataset-list" class="catalog-grid accuracy-dataset-grid"></div>
+            <div class="accuracy-dataset-pagination"><button id="accuracy-dataset-prev" type="button" class="secondary" disabled>上一页</button><span id="accuracy-dataset-page"></span><button id="accuracy-dataset-next" type="button" class="secondary" disabled>下一页</button></div>
+          </section>
+          <dialog id="accuracy-dataset-dialog" class="accuracy-detail-dialog">
+            <section class="accuracy-detail-shell"><div class="dialog-head"><div><p class="eyebrow">EVALSCOPE DATASET</p><h2 id="accuracy-dataset-title">数据集详情</h2></div><button type="button" class="icon-button" data-dataset-close aria-label="关闭">×</button></div><div id="accuracy-dataset-detail"></div><div id="accuracy-dataset-detail-actions" class="dialog-actions"></div></section>
+          </dialog>
+          <section class="dataset-integration-center" aria-labelledby="dataset-integration-heading">
+            <div class="section-heading"><div><h2 id="dataset-integration-heading">AI 数据集接入</h2><p>选择卡片“一键接入” → Codex 检查并提出方案 → 你确认 → 平台真实试跑 → 验证成功后启用。复杂基准会明确说明尚缺的适配条件。</p></div></div>
+            <div id="dataset-integration-list" class="accuracy-run-list"><div class="empty-state compact">从尚未接入的数据集卡片启动接入对话。</div></div>
+            <section id="dataset-integration-terminal-panel" class="dataset-integration-terminal-panel" hidden>
+              <div class="section-heading dataset-integration-conversation-heading"><div><h3 id="dataset-integration-terminal-title">Codex 接入对话</h3><small id="dataset-integration-terminal-status"></small></div><div class="dataset-integration-conversation-actions"><div class="terminal-view-switch" role="tablist" aria-label="数据集接入对话显示方式"><button id="show-dataset-integration-chat" type="button" class="terminal-view-tab active" role="tab" aria-selected="true" aria-controls="dataset-integration-chat-view">精简对话</button><button id="show-dataset-integration-terminal" type="button" class="terminal-view-tab" role="tab" aria-selected="false" aria-controls="dataset-integration-terminal">原始终端</button></div><button id="close-dataset-integration-terminal" type="button" class="secondary">收起对话</button></div></div>
+              <div id="dataset-integration-terminal" aria-label="Codex 数据集接入原始终端" hidden></div>
+              <form id="dataset-integration-message-form" hidden><label>补充需求或询问接入进度<textarea id="dataset-integration-message" rows="2" maxlength="4000" placeholder="例如：解释这次验证的样本与判分方式。"></textarea></label><button id="send-dataset-integration-message" type="submit" class="primary" disabled>发送给 Codex</button></form>
+              <section id="dataset-integration-chat-view" class="ai-chat-view dataset-integration-chat-view" aria-label="Codex 数据集接入精简对话">
+                <div class="ai-chat-intro"><span class="ai-chat-live-dot" aria-hidden="true"></span><span id="dataset-integration-chat-availability">只显示你和 Codex 的文字消息，工具调用与运行细节已隐藏。</span></div>
+                <div id="dataset-integration-chat-messages" class="ai-chat-messages" role="log" aria-live="polite" aria-label="数据集接入对话消息"><div class="ai-chat-empty"><span class="waiting-spinner"></span><strong>正在读取接入对话</strong><span>完成后结果会自动显示在这里。</span></div></div>
+                <div id="dataset-integration-chat-error" class="ai-chat-error" role="alert" hidden></div>
+                <form id="dataset-integration-chat-form" class="ai-chat-composer"><textarea id="dataset-integration-chat-input" rows="2" maxlength="12000" autocomplete="off" placeholder="向 Codex 补充要求或询问接入进度，Enter 发送，Shift + Enter 换行" disabled></textarea><button id="send-dataset-integration-chat-message" class="primary" type="submit" disabled>发送</button></form>
+              </section>
+              <p class="accuracy-dataset-source">此对话只使用绑定数据集的接入工具。确认与试跑由平台控制，AI 不能部署、停止模型或自行更改代码与权限。</p>
+            </section>
+          </section>
+          <dialog id="dataset-integration-dialog" class="accuracy-config-dialog">
+            <form id="dataset-integration-form" method="dialog">
+              <div class="dialog-head"><div><p class="eyebrow">CODEX DATASET ONBOARDING</p><h2>AI 一键接入数据集</h2><p>先检查并提出方案，确认前不下载数据或请求模型。已验证的数据集可直接复用，无需修改平台代码。</p></div><button type="button" class="icon-button" data-integration-close aria-label="关闭">×</button></div>
+              <div class="dialog-body"><label>数据集<input id="dataset-integration-dataset" readonly></label><label>验证目标<input id="dataset-integration-target" readonly></label><label>接入需求<textarea name="intent" rows="3" maxlength="12000" required></textarea></label><div class="form-grid"><label>Codex 模型（留空沿用 CLI）<input name="ai_model" maxlength="128"></label><label>思考强度<select name="reasoning_effort"><option value="">沿用 CLI</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option><option value="ultra">ultra</option></select></label></div><div id="dataset-integration-note" class="security-notice"></div><div id="dataset-integration-error" class="form-error" role="alert"></div></div>
+              <div class="dialog-actions"><button type="button" class="secondary" data-integration-close>取消</button><button id="create-dataset-integration" type="submit" class="primary">启动 Codex 接入助手</button></div>
+            </form>
+          </dialog>
+          <div class="section-heading"><div><h2>AI 评测助手</h2><p>描述需求 → Codex 提交方案 → 你确认 → EvalScope 试跑与正式评测 → AI 解读真实报告。</p></div></div>
+          <div id="ai-accuracy-workflow-list" class="accuracy-run-list"><div class="empty-state compact">选择模型后点击“AI 一键评测”，无需填写全部评测参数。</div></div>
+          <dialog id="ai-accuracy-dialog" class="accuracy-config-dialog">
+            <form id="ai-accuracy-form" method="dialog">
+              <div class="dialog-head"><div><p class="eyebrow">CODEX × EVALSCOPE</p><h2>AI 一键模型精度评测</h2><p>AI 提出方案，不会在你确认前请求模型，也不会部署或重启模型。</p></div><button type="button" class="icon-button" data-ai-accuracy-close aria-label="关闭">×</button></div>
+              <div class="dialog-body">
+                <label>已选评测目标<input id="ai-accuracy-target-label" readonly></label>
+                <label>你想评测什么？<textarea name="intent" rows="4" maxlength="12000" required placeholder="帮我评测这个模型的数学和中文能力，先做小规模测试。"></textarea></label>
+                <label>最大样本预算（包含试跑）<input name="sample_budget" type="number" min="1" max="10000" value="100" required></label>
+                <div class="form-grid">
+                  <label>Codex 模型（留空沿用当前 CLI 设置）<input name="ai_model" maxlength="128" placeholder="沿用平台 AI 模型"></label>
+                  <label>思考强度<select name="reasoning_effort"><option value="">沿用 CLI 设置</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option><option value="ultra">ultra</option></select></label>
+                </div>
+                <div class="security-notice">Codex 只使用已选模型的专用评测工具。评分由固定版本 EvalScope 完成；首次数据集下载可能耗时。样本上限按子集计算，不是完整官方成绩。</div>
+                <div id="ai-accuracy-error" class="form-error" role="alert"></div>
+              </div>
+              <div class="dialog-actions"><button type="button" class="secondary" data-ai-accuracy-close>取消</button><button id="create-ai-accuracy" type="submit" class="primary">让 AI 制定评测方案</button></div>
+            </form>
+          </dialog>
+          <div class="accuracy-preset-overview" aria-label="精度评测预设说明">
+            <article><strong>快速检查</strong><span>GSM8K 小样本，快速确认评测链路。</span></article>
+            <article><strong>均衡评测</strong><span>数学、推理与中文知识的代表性组合。</span></article>
+            <article><strong>正式评测</strong><span>扩大样本与学科覆盖，耗时和资源占用更高。</span></article>
+          </div>
+          <div class="section-heading"><div><h2>评测记录</h2><p>运行进度会自动刷新；结果统一展示样本完成情况和按数据集归一化的指标。</p></div><button id="refresh-accuracy" type="button" class="secondary">刷新结果</button></div>
+          <div id="accuracy-run-list" class="accuracy-run-list"></div>
+          <div class="accuracy-comparison-controls"><span id="accuracy-comparison-count">选择 2～4 条完整结果，同口径比较</span><button id="compare-accuracy" type="button" class="secondary" disabled>比较选中结果</button></div>
+          <div id="empty-accuracy-runs" class="empty-state"><div class="empty-icon">◎</div><h3>还没有精度评测</h3><p>选择一个运行中的模型服务，并从快速预设开始验证。</p></div>
+
+          <dialog id="accuracy-config-dialog" class="accuracy-config-dialog">
+            <form id="accuracy-form" method="dialog">
+              <div class="dialog-head"><div><p class="eyebrow">EVALSCOPE ACCURACY</p><h2>配置模型精度评测</h2><p>预设会填写一组可复现参数；切换到自定义后可以逐项调整。</p></div><button type="button" class="icon-button" data-accuracy-config-close aria-label="关闭">×</button></div>
+              <label>评测目标<select name="target" id="accuracy-form-target" required><option value="">选择运行中的服务</option></select></label>
+              <div class="accuracy-preset-row">
+                <label>评测预设<select name="preset" id="accuracy-preset">
+                  <option value="quick-objective-v1">快速检查（推荐首次使用）</option>
+                  <option value="balanced-objective-v1">均衡评测</option>
+                  <option value="formal-objective-v1">正式评测</option>
+                  <option value="custom-objective-v1">自定义</option>
+                </select></label>
+                <div id="accuracy-preset-note" class="accuracy-preset-note"></div>
+              </div>
+              <fieldset class="accuracy-dataset-fieldset">
+                <legend>数据集与样本范围</legend>
+                <article class="accuracy-dataset-card" data-accuracy-dataset="gsm8k">
+                  <label class="check"><input name="dataset_gsm8k" type="checkbox" checked><span><strong>GSM8K</strong><small>小学数学文字题 · main</small></span></label>
+                  <div class="accuracy-dataset-options"><label>每个子集样本数<input name="gsm8k_limit" type="number" min="1" max="10000" value="20" required></label><label>Few-shot<input name="gsm8k_few_shot" type="number" min="0" max="16" value="0" required></label></div>
+                </article>
+                <article class="accuracy-dataset-card" data-accuracy-dataset="arc">
+                  <label class="check"><input name="dataset_arc" type="checkbox"><span><strong>ARC</strong><small>科学推理选择题</small></span></label>
+                  <div class="accuracy-subset-options"><label class="check"><input name="arc_subsets" type="checkbox" value="ARC-Easy"><span>ARC Easy</span></label><label class="check"><input name="arc_subsets" type="checkbox" value="ARC-Challenge" checked><span>ARC Challenge</span></label></div>
+                  <div class="accuracy-dataset-options"><label>每个子集样本数<input name="arc_limit" type="number" min="1" max="10000" value="50" required></label><label>Few-shot<input name="arc_few_shot" type="number" min="0" max="16" value="0" required></label></div>
+                </article>
+                <article class="accuracy-dataset-card" data-accuracy-dataset="ceval">
+                  <label class="check"><input name="dataset_ceval" type="checkbox"><span><strong>C-Eval</strong><small>中文学科知识与推理</small></span></label>
+                  <label>学科 <small>逗号或换行分隔；预设会自动填写</small><textarea name="ceval_subsets" rows="3" placeholder="computer_network, operating_system"></textarea></label>
+                  <div class="accuracy-dataset-options"><label>每个学科样本数<input name="ceval_limit" type="number" min="1" max="10000" value="20" required></label><label>Few-shot<input name="ceval_few_shot" type="number" min="0" max="16" value="0" required></label></div>
+                </article>
+              </fieldset>
+              <div id="accuracy-extra-datasets"></div>
+              <details class="accuracy-advanced">
+                <summary>高级生成与执行参数</summary>
+                <div class="form-grid">
+                  <label>评测批大小<input name="eval_batch_size" type="number" min="1" max="8" value="1" required></label>
+                  <label>单请求超时（秒）<input name="timeout_seconds" type="number" min="5" max="600" value="300" required></label>
+                  <label>随机种子<input name="seed" type="number" min="-2147483648" max="2147483647" value="42" required></label>
+                  <label>最大输出 Token<input name="max_tokens" type="number" min="1" max="8192" value="2048" required></label>
+                  <label>Temperature<input name="temperature" type="number" min="0" max="2" step="0.01" value="0" required></label>
+                  <label>Top P<input name="top_p" type="number" min="0.01" max="1" step="0.01" value="1" required></label>
+                </div>
+              </details>
+              <div class="security-notice compact"><strong>执行说明</strong><span>同一时间只运行一个精度任务。数据集和缓存写入该任务的独立目录；取消会停止 EvalScope 进程，但不会停止模型服务。</span></div>
+              <label id="accuracy-cache-option" class="check" hidden><input name="use_cache" type="checkbox"><span>复用此记录的匹配缓存；修改模型或评测口径后会被拒绝</span></label>
+              <input name="cache_source_run_id" type="hidden">
+              <div id="accuracy-form-error" class="form-error"></div>
+              <div class="dialog-actions"><button type="button" class="secondary" data-accuracy-config-close>取消</button><button id="start-accuracy" type="submit" class="primary">开始精度评测</button></div>
+            </form>
+          </dialog>
+
+          <dialog id="accuracy-compare-dialog" class="accuracy-detail-dialog">
+            <section class="accuracy-detail-shell"><div class="dialog-head"><div><h2>同口径精度比较</h2><p>不同基准分别展示，不计算综合平均分。</p></div><button type="button" class="icon-button" data-accuracy-compare-close aria-label="关闭">×</button></div><div id="accuracy-compare-content"></div><div class="dialog-actions"><button type="button" class="secondary" data-accuracy-compare-close>关闭</button></div></section>
+          </dialog>
+          <dialog id="accuracy-detail-dialog" class="accuracy-detail-dialog">
+            <section class="accuracy-detail-shell">
+              <div class="dialog-head"><div><p class="eyebrow">ACCURACY RUN DETAIL</p><h2 id="accuracy-detail-title">精度评测详情</h2><small id="accuracy-detail-status"></small></div><button type="button" class="icon-button" data-accuracy-detail-close aria-label="关闭">×</button></div>
+              <div id="accuracy-detail-content"><div class="empty-state compact">正在读取评测详情…</div></div>
+              <div class="dialog-actions"><button type="button" class="secondary" data-accuracy-detail-close>关闭</button></div>
+            </section>
+          </dialog>
+        </section>
+
+        <section id="view-ai-sessions" class="view" data-ui-id="page.ai-sessions">
+          <div class="workflow-hero">
+            <div><p class="eyebrow">AI SESSION WORKSPACE</p><h2>AI 会话</h2><p>集中查看部署、评测执行、停服和诊断对话；性能配置与结果仍保留在独立的性能评测页面。</p></div>
+            <span>会话工作区</span>
+          </div>
+          <div id="ai-sessions-workspace-host">
+            <div id="ai-session-workspace" class="ai-session-workspace">
+          <div class="section-heading">
+            <div><h2 id="ai-workspace-title">AI 会话记录</h2><p id="ai-workspace-description">会话按任务分类保存，部署、评测执行、停服和诊断上下文彼此独立。</p></div>
+            <div class="section-actions"><label class="inline-check"><input id="show-archived-ai" type="checkbox">显示已存档</label><button id="open-ai-session" class="primary">新建 AI 会话</button></div>
+          </div>
+          <div id="ai-provider-status" class="provider-grid"></div>
+          <div class="ai-session-browser">
+            <div class="ai-session-tabs" role="tablist" aria-label="AI 会话分类">
+              <button type="button" class="ai-session-tab" data-ai-session-category="deployment" role="tab">部署 <span id="ai-session-count-deployment">0</span></button>
+              <button type="button" class="ai-session-tab" data-ai-session-category="benchmark" role="tab">性能评测 <span id="ai-session-count-benchmark">0</span></button>
+              <button type="button" class="ai-session-tab" data-ai-session-category="accuracy" role="tab">精度评测 <span id="ai-session-count-accuracy">0</span></button>
+              <button type="button" class="ai-session-tab" data-ai-session-category="stop" role="tab">停服 <span id="ai-session-count-stop">0</span></button>
+              <button type="button" class="ai-session-tab" data-ai-session-category="other" role="tab">诊断与其他 <span id="ai-session-count-other">0</span></button>
+            </div>
+            <small id="ai-session-filter-summary" class="ai-session-filter-summary"></small>
+          </div>
+          <div id="ai-session-list" class="ai-session-list"></div>
+          <div id="ai-terminal-panel" class="terminal-panel" hidden>
+            <div class="terminal-toolbar">
+              <div class="terminal-identity">
+                <div class="terminal-title-row">
+                  <strong id="terminal-title" role="button" tabindex="0" aria-label="重命名当前会话" title="点击重命名">AI 终端</strong>
+                  <button id="edit-terminal-title" class="terminal-title-edit" type="button" aria-label="重命名会话" title="重命名会话" hidden>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.9-10.9a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"/><path d="m14.7 6.5 3 3"/></svg>
+                  </button>
+                  <form id="terminal-title-form" class="terminal-title-form" hidden>
+                    <input id="terminal-title-input" maxlength="120" autocomplete="off" aria-label="会话名称" aria-describedby="terminal-title-save-status" required>
+                    <button class="terminal-title-save" type="submit">保存</button>
+                    <button id="cancel-terminal-title" class="terminal-title-cancel" type="button">取消</button>
+                  </form>
+                  <small id="terminal-title-save-status" class="terminal-title-save-status" role="status" aria-live="polite" hidden></small>
+                </div>
+                <div class="terminal-session-meta"><small id="terminal-session-meta"></small><small id="terminal-status"></small><small id="auto-resume-status">自动续跑：关闭</small></div>
+              </div>
+              <div class="terminal-toolbar-actions">
+                <div class="terminal-view-switch" role="tablist" aria-label="AI 对话显示方式">
+                  <button id="show-ai-chat" type="button" class="terminal-view-tab active" role="tab" aria-selected="true" aria-controls="ai-chat-view">精简对话</button>
+                  <button id="show-ai-terminal" type="button" class="terminal-view-tab" role="tab" aria-selected="false" aria-controls="terminal">原始终端</button>
+                </div>
+                <button id="resume-ai-session" class="primary" hidden>继续会话</button><button id="auto-resume-ai-session" class="secondary">自动续跑</button><button id="stop-ai-session" class="secondary">停止</button><button id="close-terminal" class="secondary">关闭终端</button>
+              </div>
+            </div>
+            <div id="auto-resume-notice" class="auto-resume-notice" aria-live="polite" hidden>
+              <span class="auto-resume-pulse" aria-hidden="true"></span>
+              <div><strong id="auto-resume-notice-title">自动续跑正在监测</strong><small id="auto-resume-notice-reason"></small></div>
+              <span id="auto-resume-countdown"></span>
+            </div>
+            <div id="terminal"></div>
+            <section id="ai-chat-view" class="ai-chat-view" aria-label="AI 精简对话">
+              <div class="ai-chat-intro"><span class="ai-chat-live-dot" aria-hidden="true"></span><span id="ai-chat-availability">只显示你和 AI 的文字消息，工具调用与运行细节已隐藏。</span></div>
+              <div id="ai-chat-messages" class="ai-chat-messages" role="log" aria-live="polite" aria-label="AI 对话消息"></div>
+              <div id="ai-chat-error" class="ai-chat-error" role="alert" hidden></div>
+              <form id="ai-chat-form" class="ai-chat-composer">
+                <textarea id="ai-chat-input" rows="2" maxlength="12000" autocomplete="off" placeholder="向 AI 补充要求或继续追问，Enter 发送，Shift + Enter 换行"></textarea>
+                <button id="send-ai-chat-message" class="primary" type="submit">发送</button>
+              </form>
+            </section>
+            <div id="ai-result-heading" class="result-heading"><strong>部署与当前状态</strong><small>首次验收记录永久保留；当前容器和健康状态持续刷新</small></div>
+            <div id="ai-deployment-result" class="deployment-result"><div class="empty-state compact">等待 AI 提交统一部署结果…</div></div>
+            <div class="audit-heading"><strong>操作审计</strong><button id="refresh-ai-audit" class="secondary">刷新</button></div>
+            <div id="ai-audit" class="timeline compact"></div>
+          </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="deploy-dialog">
+      <form id="deploy-form" method="dialog">
+        <div class="dialog-head"><div><p class="eyebrow">NEW DEPLOYMENT</p><h2>部署 vLLM 模型</h2></div><button type="button" class="icon-button" data-close>×</button></div>
+        <label>模型 ID<input name="model_id" required placeholder="Qwen/Qwen2.5-7B-Instruct"></label>
+        <label>本地模型目录 <small>可选；留空则从 Hugging Face 下载</small><input name="local_model_path" placeholder="/absolute/path/to/model"></label>
+        <div class="form-grid">
+          <label>服务端口<input name="port" type="number" value="8000" min="1" max="65535" required></label>
+          <label>上下文长度<input name="max_model_len" type="number" placeholder="自动"></label>
+          <label>GPU 内存比例<input name="gpu_memory_utilization" type="number" value="0.9" min="0.01" max="1" step="0.01"></label>
+          <label>启动超时（秒）<input name="startup_timeout_seconds" type="number" value="600" min="10"></label>
+        </div>
+        <details><summary>高级设置</summary>
+          <label>vLLM 镜像<input name="image" list="local-image-options" value="nvcr.io/nvidia/vllm:26.07-py3"><datalist id="local-image-options"></datalist></label>
+          <label>模型来源<select name="source"><option value="huggingface">Hugging Face</option><option value="modelscope">ModelScope</option></select></label>
+          <label>对外模型名称<input name="served_model_name" placeholder="默认使用模型 ID"></label>
+          <label class="check"><input name="trust_remote_code" type="checkbox"><span>我确认允许执行模型仓库远程代码（存在安全风险）</span></label>
+          <label>额外参数 <small>每行一个参数</small><textarea name="extra_args" rows="3" placeholder="--enforce-eager"></textarea></label>
+        </details>
+        <div id="form-error" class="form-error"></div>
+        <div class="dialog-actions"><button type="button" class="secondary" data-close>取消</button><button type="submit" class="primary">创建部署</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="benchmark-dialog">
+      <form id="benchmark-form" method="dialog">
+        <div class="dialog-head"><div><p class="eyebrow">INFERENCE BENCHMARK</p><h2>配置性能测试</h2></div><button type="button" class="icon-button" data-benchmark-close>×</button></div>
+        <input name="target_type" type="hidden"><input name="target_id" type="hidden">
+        <div id="benchmark-target-summary" class="ai-target-summary"></div>
+        <div class="form-grid">
+          <label>请求接口<select name="endpoint"><option value="chat_completions">Chat Completions</option><option value="completions">Completions</option></select></label>
+          <label>近似输入 Token<input name="input_tokens" type="number" value="512" min="1" max="131072" required></label>
+          <label>最大输出 Token<input name="output_tokens" type="number" value="128" min="1" max="8192" required></label>
+          <label>并发数<input name="concurrency" type="number" value="1" min="1" max="64" required></label>
+          <label>正式请求数<input name="total_requests" type="number" value="10" min="1" max="1000" required></label>
+          <label>预热请求数<input name="warmup_requests" type="number" value="1" min="0" max="10" required></label>
+          <label>单请求超时（秒）<input name="timeout_seconds" type="number" value="300" min="5" max="600" required></label>
+        </div>
+        <small class="benchmark-note">输入长度使用重复的中性文本近似构造；结果以服务返回的实际 Prompt/Completion Token 数为准。输出可能因 EOS 提前结束。</small>
+        <div id="benchmark-form-error" class="form-error"></div>
+        <div class="dialog-actions"><button type="button" class="secondary" data-benchmark-close>取消</button><button id="start-benchmark" type="submit" class="primary">开始测试</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="ai-dialog">
+      <form id="ai-form" method="dialog">
+        <div class="dialog-head"><div><p class="eyebrow">CONTROLLED AI SESSION</p><h2 id="ai-dialog-title">启动 AI 调试终端</h2></div><button type="button" class="icon-button" data-ai-close>×</button></div>
+        <input name="task_type" type="hidden" value="general"><input name="target_model_id" type="hidden"><input name="target_source" type="hidden"><input name="target_revision" type="hidden"><input name="target_local_path" type="hidden"><input name="benchmark_target_type" type="hidden"><input name="benchmark_target_id" type="hidden">
+        <div id="ai-target-summary" class="ai-target-summary" hidden></div>
+        <section id="ai-benchmark-plan" class="ai-benchmark-plan" hidden>
+          <div class="benchmark-plan-head"><div><strong>评测配置（可选）</strong><small>留空或选择“参考脚本”时，由 AI 继承它最终选用脚本的默认值；填写项会作为必须遵守的约束。</small></div><span>AI 自适应</span></div>
+          <div class="form-grid">
+            <label>输入 → 输出 Token 组合 <small>逗号或换行分隔</small><textarea name="benchmark_io_shapes" rows="2" placeholder="例如：512→128, 4096→512"></textarea></label>
+            <label>并发矩阵 <small>逗号或换行分隔</small><textarea name="benchmark_concurrencies" rows="2" placeholder="例如：1, 4, 8, 16"></textarea></label>
+          </div>
+          <div class="benchmark-number-grid">
+            <label>每组请求数<input name="benchmark_requests" type="number" min="1" max="1000000" placeholder="参考脚本"></label>
+            <label>每组轮数<input name="benchmark_runs" type="number" min="1" max="10000" placeholder="参考脚本"></label>
+            <label>预热请求数<input name="benchmark_warmups" type="number" min="0" max="100000" placeholder="参考脚本"></label>
+            <label>超时（秒）<input name="benchmark_timeout" type="number" min="1" max="86400" placeholder="参考脚本"></label>
+            <label>测试间冷却（秒）<input name="benchmark_cooldown" type="number" min="0" max="86400" placeholder="参考脚本"></label>
+          </div>
+          <div class="form-grid">
+            <label>请求接口<select name="benchmark_endpoint"><option value="reference">参考脚本</option><option value="chat_completions">Chat Completions</option><option value="completions">Completions</option></select></label>
+            <label>测试数据<select id="benchmark-dataset" name="benchmark_dataset"><option value="reference">参考脚本</option><option value="random">随机数据</option><option value="real_text">真实文本</option><option value="specified">指定数据集</option></select></label>
+            <label id="benchmark-dataset-path" hidden>数据集路径或名称<input name="benchmark_dataset_path" maxlength="4096" placeholder="本地路径或数据集标识"></label>
+            <label>固定输出长度<select name="benchmark_exact_output"><option value="reference">参考脚本</option><option value="true">要求固定长度</option><option value="false">允许 EOS 提前结束</option></select></label>
+            <label>Prefix Cache<select name="benchmark_prefix_cache"><option value="reference">参考脚本</option><option value="current">保持当前服务配置</option><option value="enabled">启用</option><option value="disabled">禁用</option><option value="compare">启用 / 禁用对比</option></select></label>
+            <label>A/B 部署参数测试<select id="benchmark-ab-enabled" name="benchmark_ab_enabled"><option value="reference">参考脚本</option><option value="true">启用 A/B 测试</option><option value="false">不进行 A/B 测试</option></select></label>
+          </div>
+          <label id="benchmark-ab-dimensions" hidden>A/B 测试维度<textarea name="benchmark_ab_dimensions" rows="2" maxlength="4000" placeholder="例如：tensor_parallel_size=1/2；gpu_memory_utilization=0.8/0.9"></textarea></label>
+          <fieldset class="benchmark-choice-group"><legend>性能指标 <small>不选则继承参考脚本</small></legend><div class="benchmark-choice-grid">
+            <label class="check"><input name="benchmark_metrics" type="checkbox" value="ttft"><span>TTFT</span></label>
+            <label class="check"><input name="benchmark_metrics" type="checkbox" value="tpot"><span>TPOT</span></label>
+            <label class="check"><input name="benchmark_metrics" type="checkbox" value="itl"><span>ITL</span></label>
+            <label class="check"><input name="benchmark_metrics" type="checkbox" value="prefill_throughput"><span>Prefill 吞吐</span></label>
+            <label class="check"><input name="benchmark_metrics" type="checkbox" value="decode_throughput"><span>Decode 吞吐</span></label>
+            <label class="check"><input name="benchmark_metrics" type="checkbox" value="request_throughput"><span>请求吞吐</span></label>
+            <label class="check"><input name="benchmark_metrics" type="checkbox" value="token_throughput"><span>Token 吞吐</span></label>
+            <label class="check"><input name="benchmark_metrics" type="checkbox" value="latency_percentiles"><span>延迟分位数</span></label>
+          </div></fieldset>
+          <fieldset class="benchmark-choice-group"><legend>资源指标 <small>不选则继承参考脚本</small></legend><div class="benchmark-choice-grid">
+            <label class="check"><input name="benchmark_resource_metrics" type="checkbox" value="unified_memory" checked><span>统一内存（默认）</span></label>
+            <label class="check"><input name="benchmark_resource_metrics" type="checkbox" value="gpu"><span>GPU</span></label>
+            <label class="check"><input name="benchmark_resource_metrics" type="checkbox" value="network_rdma"><span>网络 / RDMA</span></label>
+            <label class="check"><input name="benchmark_resource_metrics" type="checkbox" value="speculative_acceptance"><span>投机解码接受率</span></label>
+          </div></fieldset>
+        </section>
+        <div class="form-grid">
+          <label>会话名称<input name="display_name" maxlength="120" placeholder="例如：GLM 双机部署"></label>
+          <label>AI 模型 <small>留空则跟随 CLI 默认</small><input name="ai_model" list="ai-model-options" placeholder="例如：gpt-5.6-sol"><datalist id="ai-model-options"><option value="gpt-5.6-sol"><option value="gpt-5.6-terra"><option value="gpt-5.6-luna"></datalist></label>
+        </div>
+        <div class="form-grid">
+          <label>AI 工具<select name="provider" required><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek">DeepSeek Harness</option></select></label>
+          <label>思考强度 <small>仅 Codex</small><select id="ai-reasoning-effort" name="reasoning_effort"><option value="">模型默认</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="xhigh">超高</option><option value="max">最大</option><option value="ultra">极限</option></select></label>
+        </div>
+        <label>执行模式<select id="ai-execution-mode" name="execution_mode"><option value="autonomous" selected>自主执行（推荐）</option><option value="interactive">交互审批</option><option value="full_access">完整宿主机权限</option></select></label>
+        <label id="ai-deployment-topology-field" hidden>部署拓扑<select name="deployment_topology"><option value="single_node" selected>单机（跳过多机核验）</option><option value="multi_node">多机（加载 SSH / RDMA / NCCL 教程）</option><option value="auto">由现有部署上下文判断</option></select></label>
+        <label id="ai-deployment-field">关联部署<select id="ai-deployment" name="deployment_id"><option value="">不关联部署</option></select></label>
+        <label id="full-access-ack" class="check danger-check" hidden><input name="full_access_acknowledged" type="checkbox"><span>我确认 AI 将以当前用户的完整宿主机权限执行，本会话不启用命令沙箱或逐条审批。</span></label>
+        <label>任务说明<textarea name="initial_prompt" rows="5" placeholder="诊断这个部署失败的原因，并在每次修改前说明计划。"></textarea></label>
+        <label>参考链接 <small>每行一个 GitHub 或网页链接，最多 5 个；AI 优先考虑教程推荐的引擎、镜像和版本，但内容仍按不可信资料校验</small><textarea name="reference_urls" rows="4" placeholder="https://github.com/...\nhttps://docs..."></textarea></label>
+        <label class="check"><input name="web_search" type="checkbox"><span>允许 Codex 使用实时网页搜索</span></label>
+        <div class="security-notice compact"><span>自主模式会自动执行常规下载、镜像、容器、日志和验证操作，仅高风险动作才暂停。完整宿主机模式没有 Codex 沙箱，必须明确确认。sudo 密码始终不会保存。</span></div>
+        <div id="ai-form-error" class="form-error"></div>
+        <div class="dialog-actions"><button type="button" class="secondary" data-ai-close>取消</button><button id="start-ai-submit" type="submit" class="primary">启动终端</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="ai-benchmark-result-dialog" class="ai-benchmark-result-dialog">
+      <section class="ai-benchmark-result-shell">
+        <div class="dialog-head"><div><p class="eyebrow">AI BENCHMARK RESULT</p><h2 id="ai-benchmark-result-title">自定义评测结果</h2></div><button type="button" class="icon-button" data-ai-benchmark-result-close>×</button></div>
+        <div id="ai-benchmark-result-content"></div>
+        <div class="dialog-actions"><button type="button" class="secondary" data-ai-benchmark-result-close>关闭</button></div>
+      </section>
+    </dialog>
+
+    <dialog id="ai-reuse-dialog">
+      <section class="ai-reuse-shell">
+        <div class="dialog-head"><div><p class="eyebrow">DEPLOYMENT HISTORY</p><h2>发现该模型的部署会话</h2></div><button type="button" class="icon-button" data-ai-reuse-close>×</button></div>
+        <p id="ai-reuse-description" class="dialog-description"></p>
+        <div id="ai-reuse-list" class="ai-reuse-list"></div>
+        <div class="dialog-actions"><button type="button" class="secondary" data-ai-reuse-close>取消</button><button id="create-new-ai-deploy" type="button" class="primary">新建 AI 会话</button></div>
+      </section>
+    </dialog>
+
+    <dialog id="ai-multi-template-dialog">
+      <form method="dialog" class="ai-reuse-shell">
+        <div class="dialog-head"><div><p class="eyebrow">MULTI-NODE TEMPLATE</p><h2>发现已验证的多机模板</h2></div><button type="submit" value="cancel" class="icon-button" aria-label="取消">×</button></div>
+        <p id="ai-multi-template-description" class="dialog-description"></p>
+        <div class="multi-template-warning"><strong>需要明确确认</strong><span>复用多机模板可能连接并操作其他节点；平台不会在未确认时自动执行。</span></div>
+        <div class="dialog-actions"><button type="submit" value="cancel" class="secondary">取消</button><button id="create-single-node-ai-deploy" type="submit" value="single_node" class="secondary">按单机新建</button><button id="reuse-multi-node-template" type="submit" value="multi_node" class="primary">确认复用多机模板</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="auto-resume-dialog">
+      <form id="auto-resume-form" method="dialog">
+        <div class="dialog-head"><div><p class="eyebrow">SESSION RECOVERY</p><h2>AI 中断自动续跑</h2></div><button type="button" class="icon-button" data-auto-resume-close>×</button></div>
+        <p class="dialog-description">检测到限流、响应流中断、连接重置或超时后，自动向当前会话发送续跑指令。使用递增等待时间，不会新建会话。
+        </p>
+        <div class="form-grid">
+          <label>最大重试次数<input name="max_retries" type="number" value="5" min="1" max="50" required></label>
+          <label>首次等待（秒）<input name="base_delay_seconds" type="number" value="15" min="1" max="300" required></label>
+        </div>
+        <label>续跑指令<textarea name="prompt" rows="3" maxlength="500" required>继续执行上次任务</textarea></label>
+        <div id="auto-resume-form-error" class="form-error"></div>
+        <div class="dialog-actions"><button id="disable-auto-resume" type="button" class="secondary">关闭自动续跑</button><button type="button" class="secondary" data-auto-resume-close>取消</button><button type="submit" class="primary">启用并重置计数</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="service-log-dialog" class="service-log-dialog">
+      <section class="service-log-shell">
+        <div class="dialog-head"><div><p class="eyebrow">LIVE SERVICE OUTPUT</p><h2 id="service-log-title">实时服务日志</h2><small id="service-log-connection">正在连接…</small></div><button id="close-service-logs" type="button" class="icon-button">×</button></div>
+        <div class="service-log-toolbar">
+          <input id="service-log-search" type="search" placeholder="搜索日志、请求路径或状态码">
+          <button id="pause-service-logs" type="button" class="secondary">暂停显示</button>
+          <button id="clear-service-logs" type="button" class="secondary">清空视图</button>
+          <button id="download-service-logs" type="button" class="secondary">下载</button>
+          <label class="inline-check"><input id="service-log-hide-health" type="checkbox" checked>隐藏健康检查</label>
+          <label class="inline-check"><input id="service-log-autoscroll" type="checkbox" checked>自动滚动</label>
+        </div>
+        <div id="service-request-summary" class="service-request-summary">当前日志窗口尚未识别请求记录。</div>
+        <pre id="service-log-output" class="service-log-output">等待容器日志…</pre>
+          <small class="service-log-privacy">这里直接读取容器 stdout/stderr。vLLM 等引擎默认通常只写启动信息和访问记录，不写 Prompt 或响应正文；直接访问模型端口的请求也不会经过 Uniform。正文采集默认关闭，避免泄露对话内容并减少流式响应的性能开销。</small>
+      </section>
+    </dialog>
+
+    <dialog id="service-publication-dialog" class="service-publication-dialog">
+      <section class="service-publication-shell">
+        <div class="dialog-head">
+          <div><p class="eyebrow">MODEL ACCESS</p><h2 id="service-publication-title">发布模型服务</h2></div>
+          <button type="button" class="icon-button" data-publication-close>×</button>
+        </div>
+        <div id="service-publication-content" aria-live="polite"></div>
+        <div class="dialog-actions"><button type="button" class="secondary" data-publication-close>完成</button></div>
+      </section>
+    </dialog>
+
+    <dialog id="arena-log-dialog" class="service-log-dialog">
+      <section class="service-log-shell">
+        <div class="dialog-head"><div><p class="eyebrow">LLAMA-BENCHY OUTPUT</p><h2 id="arena-log-title">Arena 评测日志</h2><small id="arena-log-status">每秒自动刷新</small></div><button id="close-arena-logs" type="button" class="icon-button">×</button></div>
+        <pre id="arena-log-output" class="service-log-output">等待 llama-benchy 输出…</pre>
+        <small class="service-log-privacy">日志来自评测进程本身；模型服务的访问日志仍在“实时服务日志”中查看。</small>
+      </section>
+    </dialog>
+
+    <aside id="detail-drawer" class="drawer" aria-hidden="true">
+      <div class="drawer-head"><div><p class="eyebrow">DEPLOYMENT DETAIL</p><h2 id="detail-title">任务详情</h2></div><button id="close-detail" class="icon-button">×</button></div>
+      <div id="detail-content"></div>
+    </aside>
+    <div id="drawer-backdrop" class="backdrop"></div>
+    <div id="ui-edit-highlight" class="ui-edit-highlight" data-ui-editor hidden></div>
+    <dialog id="ui-edit-dialog" class="ui-edit-dialog" data-ui-editor>
+      <form id="ui-edit-form" method="dialog">
+        <div class="dialog-head">
+          <div><p class="eyebrow">VISUAL AI EDITOR</p><h2>修改选中的界面</h2></div>
+          <button id="ui-edit-close" type="button" class="icon-button">×</button>
+        </div>
+        <div id="ui-edit-request-fields">
+          <div id="ui-edit-target-summary" class="ui-edit-target-summary"></div>
+          <label>修改范围<select name="scope">
+            <option value="element">仅当前元素</option>
+            <option value="component">同一组件</option>
+            <option value="page">当前页面</option>
+            <option value="global">全局设计</option>
+          </select></label>
+          <label>告诉 AI 要怎么改<textarea name="instruction" rows="5" maxlength="4000" required placeholder="例如：标题字体放大一些，并增加与下方内容的间距"></textarea></label>
+          <div class="security-notice compact"><span>Codex 会在隔离 Git 工作区直接修改和测试前端代码。检查结果用于帮助 AI 修复，不会因普通校验警告阻止应用。</span></div>
+        </div>
+        <div id="ui-edit-progress" class="ui-edit-progress" hidden></div>
+        <details id="ui-edit-log-panel" class="ui-edit-log-panel" hidden open>
+          <summary>AI 修改历程 <small id="ui-edit-log-meta"></small></summary>
+          <div id="ui-edit-conversation" class="ui-edit-conversation"></div>
+          <div id="ui-edit-intervention" class="ui-edit-intervention" hidden>
+            <textarea id="ui-edit-follow-up" rows="2" maxlength="4000" placeholder="随时纠正方向或补充要求，例如：不要改变导航栏"></textarea>
+            <div>
+              <button id="ui-edit-stop" type="button" class="danger">停止</button>
+              <button id="ui-edit-follow-up-send" type="button" class="secondary">发送给 Codex</button>
+            </div>
+          </div>
+          <details class="ui-edit-raw-details">
+            <summary>技术日志</summary>
+            <pre id="ui-edit-log-output">等待 Codex 输出…</pre>
+          </details>
+        </details>
+        <div id="ui-edit-error" class="form-error"></div>
+        <div class="dialog-actions">
+          <button id="ui-edit-cancel" type="button" class="secondary">取消</button>
+          <button id="ui-edit-submit" type="submit" class="primary">应用并自动刷新</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="ui-edit-history-dialog" class="ui-edit-history-dialog" data-ui-editor>
+      <section>
+        <div class="dialog-head">
+          <div><p class="eyebrow">CODEX SESSION ARCHIVE</p><h2>UI 修改执行记录</h2><small>每条修改对应一个独立任务、工作区与 Codex 会话</small></div>
+          <button id="ui-edit-history-close" type="button" class="icon-button">×</button>
+        </div>
+        <div class="ui-edit-history-layout">
+          <aside class="ui-edit-history-sidebar">
+            <div class="ui-edit-history-sidebar-head"><strong>会话记录</strong><small id="ui-edit-history-count"></small></div>
+            <div id="ui-edit-history-list" class="ui-edit-history-list"><div class="empty-state compact">正在读取记录…</div></div>
+          </aside>
+          <section class="ui-edit-history-detail">
+            <div id="ui-edit-history-empty" class="empty-state compact">选择一条记录查看完整会话</div>
+            <div id="ui-edit-history-content" hidden>
+              <div class="ui-edit-history-title-row">
+                <div><p class="eyebrow">INDEPENDENT CODEX SESSION</p><h3 id="ui-edit-history-title"></h3></div>
+                <div class="ui-edit-history-title-actions">
+                  <span id="ui-edit-history-status" class="ui-edit-history-status"></span>
+                  <button id="ui-edit-history-open-active" type="button" class="secondary" hidden>进入当前会话</button>
+                  <button id="ui-edit-history-retry" type="button" class="primary" hidden>重试此次修改</button>
+                </div>
+              </div>
+              <div id="ui-edit-history-meta" class="ui-edit-history-meta"></div>
+              <h4 class="ui-edit-history-section-title">CLI 对话记录</h4>
+              <div id="ui-edit-history-conversation" class="ui-edit-conversation ui-edit-history-conversation"></div>
+              <details class="ui-edit-raw-details">
+                <summary>原始 Codex CLI 输出（脱敏 JSONL） <small id="ui-edit-history-raw-meta"></small></summary>
+                <pre id="ui-edit-history-raw">等待 Codex 输出…</pre>
+              </details>
+            </div>
+          </section>
+        </div>
+        <div id="ui-edit-history-error" class="form-error"></div>
+      </section>
+    </dialog>
+    <dialog id="ui-screenshot-dialog" class="ui-screenshot-dialog" data-ui-editor>
+      <form id="ui-screenshot-form" method="dialog">
+        <div class="dialog-head">
+          <div><p class="eyebrow">VISUAL CONTEXT</p><h2>圈选截图中的问题区域</h2></div>
+          <button id="ui-screenshot-close" type="button" class="icon-button">×</button>
+        </div>
+        <p class="ui-screenshot-help">平台使用本机 Chromium 截取当前画面，并自动补充页面下方及内部滚动区域。拖拽圈选后，AI 会同时收到全局上下文、带框视图、局部细节和修改意见。</p>
+        <div id="ui-screenshot-stage" class="ui-screenshot-stage">
+          <canvas id="ui-screenshot-canvas"></canvas>
+          <div id="ui-screenshot-empty">请在截图上拖拽圈选区域</div>
+        </div>
+        <div id="ui-screenshot-selection-meta" class="ui-screenshot-selection-meta">尚未圈选</div>
+        <div id="ui-screenshot-context-meta" class="ui-screenshot-context-meta">正在分析页面滚动区域…</div>
+        <label>告诉 AI 这个区域需要怎么改<textarea name="instruction" rows="4" maxlength="4000" required placeholder="例如：红框内的内容太拥挤，请在不破坏整体层级的前提下增加留白"></textarea></label>
+        <div id="ui-screenshot-error" class="form-error"></div>
+        <div class="dialog-actions">
+          <button id="ui-screenshot-cancel" type="button" class="secondary">取消</button>
+          <button id="ui-screenshot-recapture" type="button" class="secondary">重新截屏</button>
+          <button id="ui-screenshot-submit" type="submit" class="primary">连同标注交给 Codex</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="ui-edit-revert-dialog" class="ui-edit-revert-dialog" data-ui-editor>
+      <form id="ui-edit-revert-form" method="dialog">
+        <div class="dialog-head">
+          <div><p class="eyebrow">ROLLBACK FEEDBACK</p><h2>回滚这次编辑</h2></div>
+          <button id="ui-edit-revert-close" type="button" class="icon-button">×</button>
+        </div>
+        <p class="muted">将整体恢复到本次编辑前。请告诉 AI 为什么回滚，这条反馈会用于后续修改。</p>
+        <label>回滚原因<textarea name="reason" rows="4" maxlength="2000" required placeholder="例如：标题太抢眼，并且移动端间距变窄了"></textarea></label>
+        <div id="ui-edit-revert-error" class="form-error"></div>
+        <div class="dialog-actions">
+          <button id="ui-edit-revert-cancel" type="button" class="secondary">取消</button>
+          <button type="submit" class="danger">确认整体回滚</button>
+        </div>
+      </form>
+    </dialog>
+    <div id="toast" class="toast"></div>
+    <script type="module" src="/static/app.js?v=20261027-feishu-pkce"></script>
+  </body>
+</html>
