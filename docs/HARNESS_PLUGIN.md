@@ -1,46 +1,48 @@
 # DeepSeek Harness 插件（平台 MCP）
 
-把「部署 / 发布模型」这套平台能力做成标准 **stdio MCP server**。同事在自己的电脑上装好后，
-DeepSeek Harness、Codex、Claude Code 等支持 MCP 的 AI 工具都能通过自然语言操作这台
-DGX Spark 上的 Uniform 平台。
+把 DGX Spark 上的 Uniform 平台包装成一个标准 **DeepSeek Harness 组合包**。安装后，
+Harness 会通过内置 MCP 客户端加载平台工具，用自然语言完成模型查询、部署、发布和模型外网入口管理。
 
-插件只调用平台 HTTP API（`X-API-Key`），不执行 shell、不直连 Docker，也不要求同事拿到项目源码。
-它只需要 Python 3.10+，第三方依赖为零。
+插件本身包含：
+
+- `package.json`，声明 `dsh.bundle.patch`；
+- `cordis.patch.yml`，挂载官方 `@deepseek-ai/dsh-mcp-client`；
+- 标准 stdio MCP server；
+- Node 启动器与配置工具；
+- 中英文名称、说明和图标。
+
+> 旧版 `uniform-platform-plugin-*.zip` 是便携脚本包，不是 DSH 组合包，不能拖进
+> Harness 插件管理器。Harness 必须安装 `uniform-dgxspark-platform-<版本>.tgz`。
 
 ## 一、主机：开放控制台访问
 
 ### 局域网
 
-平台默认只监听 `127.0.0.1`。在本机运行：
+平台默认只监听 `127.0.0.1`。在 DGX Spark 上运行：
 
 ```bash
 bash host/enable-lan-access.sh --show-token
 ```
 
-脚本会写入一个权限 `0600` 的 systemd drop-in，完成三件事：
+脚本会写入权限 `0600` 的 systemd drop-in：
 
-- 把监听地址改为 `0.0.0.0`，并同步改写实际 `ExecStart`（不只设置一个无效的环境变量）；
+- 把监听地址改为 `0.0.0.0`；
 - 生成随机 `UNIFORM_API_TOKEN`；
 - 重启 `uniform-dgxspark.service` 并做健康检查。
 
-把脚本打印的「局域网地址 + API Key」发给同事。以后查看 Key：
+把脚本打印的「局域网地址 + API Key」发给同事。后续查看或轮换 Key：
 
 ```bash
 bash host/enable-lan-access.sh --show-token
-```
-
-轮换 Key：
-
-```bash
 bash host/enable-lan-access.sh --rotate-token --show-token
 ```
 
 ### 外网
 
-平台没有内建控制台公网入口。`18180` 需要由主机侧打通，任选其一：
+不要直接把明文 `18180` 映射到公网。推荐：
 
-- **VPN / 组网**：Tailscale、ZeroTier、WireGuard，最省事、最安全；
-- **HTTPS 隧道或反向代理**：Cloudflare Tunnel、frp、nginx 反代到 `127.0.0.1:18180`。
+- **VPN / 组网**：Tailscale、ZeroTier、WireGuard；
+- **HTTPS 隧道或反向代理**：Cloudflare Tunnel、frp、nginx。
 
 使用 VPN/隧道域名时，把该主机名加入控制面白名单，否则发布类操作会返回
 `421 untrusted control-plane host`：
@@ -51,108 +53,87 @@ bash host/enable-lan-access.sh \
   --show-token
 ```
 
-`--external-host` 可重复，只加入白名单，不会自动开放防火墙或公网。
-
-Cloudflare Tunnel 临时验证示例（URL 每次会变）：
+Cloudflare Tunnel 临时验证：
 
 ```bash
 cloudflared tunnel --url http://127.0.0.1:18180
 ```
 
-拿到 `https://xxxx.trycloudflare.com` 后，用
-`--external-host xxxx.trycloudflare.com` 重跑主机脚本，再把这个 HTTPS 地址作为同事安装时的
-`--fallback-url`。长期使用应配置具名 Tunnel 或自有域名。
+拿到 `https://xxxx.trycloudflare.com` 后，用 `--external-host` 重新运行主机脚本，
+再把这个 HTTPS 地址作为同事配置时的 `--fallback-url`。
 
-> 平台控制台 `18180` 与模型发布端口 `18181` 是两个入口。
-> 插件里的 `enable_external_access` 只给「已发布的模型」开外网入口，不会暴露控制台。
+> 控制台端口 `18180` 与模型发布端口 `18181` 是两个入口。
+> `enable_external_access` 只给已发布模型开外网入口，不会暴露控制台。
 
-## 二、同事电脑：一条命令安装
+## 二、同事电脑：安装 DSH 组合包
 
-解压发布包后进入目录。Linux / macOS：
+### 1. 安装包
+
+在 DeepSeek Harness 的“插件”页面选择本地安装，然后选择：
+
+```text
+uniform-dgxspark-platform-1.2.0.tgz
+```
+
+也可以使用 CLI（路径必须是绝对路径）：
 
 ```bash
-python3 install.py \
+dsh plugin --profile default install /absolute/path/uniform-dgxspark-platform-1.2.0.tgz
+```
+
+> 不要再使用 `.zip` 安装到 DSH。包根缺少 `package.json` 和 `dsh.bundle.patch`
+> 时会被明确判定为 `not-bundle`。
+
+### 2. 配置地址和 Key
+
+安装后进入 Harness 终端。Linux / macOS：
+
+```bash
+"$DSH_PROFILE_DIR/node_modules/.bin/uniform-dgxspark-configure" \
   --url http://10.21.212.6:18180 \
-  --key '平台 API Key'
+  --key-file ~/uniform.key
 ```
 
 Windows PowerShell：
 
 ```powershell
-python .\install.py --url http://10.21.212.6:18180 --key "平台 API Key"
+& "$env:DSH_PROFILE_DIR\node_modules\.bin\uniform-dgxspark-configure.cmd" `
+  --url http://10.21.212.6:18180 `
+  --key-file "$HOME\uniform.key"
 ```
 
-主地址是局域网、备用地址是外网时：
+主地址是局域网、备用地址是 VPN/外网：
 
 ```bash
-python3 install.py \
+"$DSH_PROFILE_DIR/node_modules/.bin/uniform-dgxspark-configure" \
   --url http://10.21.212.6:18180 \
   --fallback-url https://uniform.example.com \
-  --key '平台 API Key'
+  --key-file ~/uniform.key
 ```
 
-不想把 Key 写进命令历史：
+配置写入用户目录，权限 `0600`，不会进入 npm 包：
 
-```bash
-python3 install.py --url http://10.21.212.6:18180 --key-file ~/uniform.key
-python3 install.py --url http://10.21.212.6:18180   # 交互输入
-```
+- Linux / macOS：`~/.config/uniform-dgxspark/platform.env`
+- Windows：`%APPDATA%\uniform-dgxspark\platform.env`
 
-安装器会：
+保存后重启 Harness 或重新加载插件。工具名称形式为
+`mcp__uniform_platform__<tool>`。
 
-1. 复制标准 MCP server 和跨平台启动器；
-2. 写出权限 `0600` 的 `mcp.json` 与 `platform.env`；
-3. 调用一次 `platform_status` 自检；主地址不通时自动尝试备用地址；
-4. 给出 Harness 配置片段，或在指定 `--config` 时自动合并 JSON/TOML。
+### 3. 运行要求
 
-### 配置 Harness
+- DSH 自带 Node.js，不需要另装 Node；
+- 同事电脑需要 Python 3.10+；
+- 如自动找不到 Python，可设置环境变量 `UNIFORM_PYTHON` 指向解释器；
+- 插件只调用平台 HTTP API，不需要 Docker 权限。
 
-不同版本 DeepSeek Harness 的配置路径可能不同，安装器不会猜测并覆盖未知文件。
-不知道路径时先打印脱敏片段：
-
-```bash
-python3 install.py --url http://10.21.212.6:18180 --print-only
-```
-
-已知路径时自动合并：
-
-```bash
-python3 install.py --url http://10.21.212.6:18180 --config ~/.deepseek/mcp.json
-python3 install.py --url http://10.21.212.6:18180 --config ~/.config/deepseek/config.toml
-```
-
-合并前会生成 `.bak`（`--no-backup` 可关闭）。TOML 会识别已有的 `mcp_servers` 或
-`mcpServers` 根表。
-
-配置形态：
-
-```json
-{
-  "mcpServers": {
-    "uniform-platform": {
-      "command": "/usr/bin/python3",
-      "args": ["/home/you/.local/share/uniform-harness-mcp/uniform_harness_mcp.py"],
-      "env": {
-        "UNIFORM_PLATFORM_URL": "http://10.21.212.6:18180",
-        "UNIFORM_PLATFORM_API_KEY": "平台 API Key",
-        "UNIFORM_PLATFORM_FALLBACK_URL": "https://uniform.example.com",
-        "UNIFORM_PLATFORM_FALLBACK_API_KEY": "平台 API Key"
-      }
-    }
-  }
-}
-```
-
-`command` 使用安装时 Python 的绝对路径，不依赖同事机器上的 `PATH`。
-
-## 三、插件提供的工具
+## 三、插件工具
 
 | 工具 | 作用 |
 | --- | --- |
 | `platform_status` | 平台健康检查，返回实际使用的地址 |
-| `open_platform_ui` | 返回平台前端地址（页面就是平台自己的前端） |
+| `open_platform_ui` | 返回平台前端地址 |
 | `list_catalog_models` / `list_local_models` | 查在线模型 / 本机已下载模型 |
-| `deploy_model` | 创建部署（模型、端口、镜像、显存比例、本地路径等） |
+| `deploy_model` | 创建部署 |
 | `list_deployments` / `get_deployment` / `deployment_logs` | 查部署状态与容器日志 |
 | `wait_for_deployment` | 轮询到 running / failed / cancelled |
 | `stop_deployment` | 停止部署并撤销发布 |
@@ -162,27 +143,43 @@ python3 install.py --url http://10.21.212.6:18180 --config ~/.config/deepseek/co
 
 ## 四、验证与排错
 
+查看脱敏后的当前配置：
+
 ```bash
-python3 ~/.local/share/uniform-harness-mcp/uniform_harness_mcp.py --self-test
+"$DSH_PROFILE_DIR/node_modules/.bin/uniform-dgxspark-configure" --show
 ```
 
-Windows 默认目录是 `%LOCALAPPDATA%\uniform-harness-mcp`。
+仅检查配置、不写文件：
 
+```bash
+"$DSH_PROFILE_DIR/node_modules/.bin/uniform-dgxspark-configure" \
+  --url http://10.21.212.6:18180 --key-file ~/uniform.key --print-only
+```
+
+- `not-bundle`：装成了旧 ZIP；改用新版 `.tgz`；
 - `platform unreachable`：地址/端口错、防火墙拦截，或主机仍只监听 `127.0.0.1`；
 - `platform rejected the API key`：Key 与主机 `UNIFORM_API_TOKEN` 不一致；
 - `421 untrusted control-plane host`：外网/VPN 域名未加入
-  `UNIFORM_PUBLICATION_CONTROL_HOSTS`，在主机脚本加 `--external-host`；
-- Harness 看不到工具：确认 MCP 配置已加载并重启 Harness；
-- 重新安装：再运行一次安装器即可覆盖插件与配置。
+  `UNIFORM_PUBLICATION_CONTROL_HOSTS`；
+- 工具不出现：完成配置后重启 Harness，并确认 Python 3.10+ 可运行。
 
 ## 五、开发与打包
 
-发布包由源码自动生成，`uniform_harness_mcp.py` 不手工维护第二份：
+发布包由源码自动生成，MCP server 不维护第二份：
 
 ```bash
-python3 scripts/build-harness-plugin.py --out dist
-sha256sum -c dist/uniform-platform-plugin-1.1.0.sha256
+NODE=.runtime/node/bin/node \
+  python3 scripts/build-dsh-plugin.py --out dist --node "$NODE"
+sha256sum -c dist/uniform-dgxspark-platform-1.2.0.sha256
 ```
 
-产物包含 `manifest.json`、`install.py`、`install.sh`、`install.ps1`、主机脚本、README 和
-MCP 入口文件。构建过程会拒绝把 `.venv`、`.runtime`、`data/`、数据库或缓存打进去。
+主要产物：
+
+```text
+dist/uniform-dgxspark-platform-1.2.0.tgz          # 安装到 DeepSeek Harness
+dist/uniform-dgxspark-platform-1.2.0-source.zip   # 源码审阅，不用于插件管理
+dist/uniform-dgxspark-platform-1.2.0.sha256
+```
+
+构建会校验 `dsh.bundle.patch`、`files` 清单、Python/JavaScript 语法和禁止目录，
+并拒绝把 `.venv`、`.runtime`、`data/`、数据库、缓存或 API Key 打进包里。

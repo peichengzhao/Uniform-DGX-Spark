@@ -30,8 +30,8 @@ def build(tmp_path: Path) -> tuple[Path, Path]:
     output = tmp_path / "dist"
     completed = run([sys.executable, str(BUILDER), "--out", str(output)])
     assert completed.returncode == 0, completed.stderr
-    zip_path = output / "uniform-platform-plugin-1.1.0.zip"
-    tar_path = output / "uniform-platform-plugin-1.1.0.tar.gz"
+    zip_path = output / "uniform-platform-plugin-1.2.0.zip"
+    tar_path = output / "uniform-platform-plugin-1.2.0.tar.gz"
     assert zip_path.is_file()
     assert tar_path.is_file()
     return zip_path, tar_path
@@ -41,7 +41,7 @@ def extract(zip_path: Path, tmp_path: Path) -> Path:
     destination = tmp_path / "unpacked"
     with zipfile.ZipFile(zip_path) as archive:
         archive.extractall(destination)
-    return destination / "uniform-platform-plugin-1.1.0"
+    return destination / "uniform-platform-plugin-1.2.0"
 
 
 def test_build_contains_manifest_and_hash_matches(tmp_path: Path) -> None:
@@ -49,7 +49,7 @@ def test_build_contains_manifest_and_hash_matches(tmp_path: Path) -> None:
     plugin = extract(zip_path, tmp_path)
     manifest = json.loads((plugin / "manifest.json").read_text(encoding="utf-8"))
 
-    assert manifest["version"] == "1.1.0"
+    assert manifest["version"] == "1.2.0"
     assert manifest["entrypoint"] == "uniform_harness_mcp.py"
     assert manifest["transport"] == "stdio"
     assert "manifest.json.in" not in manifest["files"]
@@ -65,7 +65,7 @@ def test_build_contains_manifest_and_hash_matches(tmp_path: Path) -> None:
 
     version = run([sys.executable, str(plugin / "uniform_harness_mcp.py"), "--version"])
     assert version.returncode == 0
-    assert version.stdout.strip() == "1.1.0"
+    assert version.stdout.strip() == "1.2.0"
 
 
 def test_build_is_reproducible(tmp_path: Path) -> None:

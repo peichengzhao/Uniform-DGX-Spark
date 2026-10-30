@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Uniform DGX Spark platform",
+    "description": "Browse models, deploy services, and manage LAN or external model access on a DGX Spark."
+  }
+}

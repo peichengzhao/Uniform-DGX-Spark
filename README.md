@@ -56,7 +56,8 @@ Codex 在隔离副本中修改前端源码，完成语法与并发冲突检查�
 外部 AI 工具插件可直接打包分发：
 
 ```bash
-python3 scripts/build-harness-plugin.py --out dist
+python3 scripts/build-dsh-plugin.py --out dist
 ```
 
-产物包含标准 MCP server、跨平台安装器和主机侧局域网/鉴权配置脚本。
+DeepSeek Harness 使用生成的 `.tgz` 组合包；`.zip` 只用于源码审阅。产物还包含标准
+MCP server、配置工具和主机侧局域网/鉴权配置脚本。

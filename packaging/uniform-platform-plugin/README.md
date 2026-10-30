@@ -1,5 +1,9 @@
 # Uniform DGX Spark 平台插件
 
+> 这是给 Codex、Claude Code 等直接配置 MCP 的便携脚本包，**不是 DeepSeek Harness 组合包**。
+> 在 DeepSeek Harness 中安装会提示 `not-bundle`。DSH 请安装
+> `uniform-dgxspark-platform-<版本>.tgz`，见 [`docs/HARNESS_PLUGIN.md`](../../docs/HARNESS_PLUGIN.md)。
+
 这是一个标准 **stdio MCP server**。同事在自己的电脑上安装后，可以直接用
 DeepSeek Harness、Codex、Claude Code 等支持 MCP 的 AI 工具，通过自然语言操作这台
 DGX Spark 上的 Uniform 平台：查看模型、部署模型、查看日志、发布服务、开关模型外网入口。

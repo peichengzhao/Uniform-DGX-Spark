@@ -1,0 +1,40 @@
+{
+  "name": "uniform-dgxspark-platform",
+  "version": "__VERSION__",
+  "private": true,
+  "type": "module",
+  "description": "Connect DeepSeek Harness to a Uniform DGX Spark model platform over its authenticated HTTP API.",
+  "exports": {
+    ".": "./launcher.mjs",
+    "./launcher": "./launcher.mjs",
+    "./configure": "./configure.mjs",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "uniform-dgxspark-configure": "./configure.mjs"
+  },
+  "files": [
+    "cordis.patch.yml",
+    "config.mjs",
+    "launcher.mjs",
+    "configure.mjs",
+    "runtime/uniform_harness_mcp.py",
+    "locale/*.json",
+    "meta/*.md",
+    "icon.svg",
+    "README.md",
+    "README.zh.md",
+    "host/enable-lan-access.sh"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml",
+      "listedByDefault": true
+    }
+  }
+}
