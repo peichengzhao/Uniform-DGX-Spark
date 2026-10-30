@@ -1,0 +1,42 @@
+{
+  "name": "uniform-platform-plugin",
+  "display_name": "Uniform DGX Spark Platform",
+  "version": "__VERSION__",
+  "kind": "mcp-server",
+  "transport": "stdio",
+  "entrypoint": "uniform_harness_mcp.py",
+  "description": "Drive a Uniform DGX Spark model platform from any MCP-capable AI harness.",
+  "requires": {
+    "python": ">=3.10",
+    "network": ["http", "https"]
+  },
+  "installers": {
+    "python": "install.py",
+    "posix": "install.sh",
+    "powershell": "install.ps1"
+  },
+  "environment": [
+    "UNIFORM_PLATFORM_URL",
+    "UNIFORM_PLATFORM_API_KEY",
+    "UNIFORM_PLATFORM_FALLBACK_URL",
+    "UNIFORM_PLATFORM_FALLBACK_API_KEY"
+  ],
+  "tools": [
+    "platform_status",
+    "open_platform_ui",
+    "list_catalog_models",
+    "list_local_models",
+    "list_deployments",
+    "get_deployment",
+    "deployment_logs",
+    "deploy_model",
+    "wait_for_deployment",
+    "stop_deployment",
+    "publish_service",
+    "publication_status",
+    "rotate_publication_key",
+    "unpublish_service",
+    "enable_external_access",
+    "disable_external_access"
+  ]
+}

@@ -120,6 +120,30 @@ def test_platform_url_validation_rejects_credentials_and_query() -> None:
     for url in ("ftp://host", "http://user:pass@host", "http://host/?token=1", "host:18180"):
         with pytest.raises(ValueError):
             HarnessMCP(url, "key")
+    with pytest.raises(ValueError):
+        HarnessMCP("http://host:18180", "key", fallback_url="ftp://fallback")
+
+
+def test_fallback_url_is_used_when_primary_is_unreachable() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "primary.internal":
+            raise httpx.ConnectError("primary offline", request=request)
+        assert request.url.host == "uniform.example.com"
+        return httpx.Response(200, json={"status": "ok"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    mcp = HarnessMCP(
+        "http://primary.internal:18180",
+        "platform-secret",
+        fallback_url="https://uniform.example.com",
+        client=client,
+    )
+
+    status = body(mcp.call_tool("platform_status", {}))
+    ui = body(mcp.call_tool("open_platform_ui", {}))
+
+    assert status == {"status": "ok", "platform_url": "https://uniform.example.com"}
+    assert ui["url"] == "https://uniform.example.com/"
 
 
 def test_unknown_tool_is_rejected() -> None:

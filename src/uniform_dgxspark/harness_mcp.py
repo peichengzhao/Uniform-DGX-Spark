@@ -11,12 +11,85 @@ import json
 import os
 import sys
 import time
+from json import dumps as json_dumps
 from typing import Any
-from urllib.parse import urlparse
-
-import httpx
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode, urlparse
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 TERMINAL_STATUSES = {"running", "stopped", "failed", "cancelled"}
+PLUGIN_VERSION = "1.1.0"
+
+
+class HarnessNetworkError(RuntimeError):
+    """Raised when no configured platform endpoint can be reached."""
+
+
+class _Response:
+    def __init__(self, status_code: int, body: bytes, headers: Any = None) -> None:
+        self.status_code = status_code
+        self.content = body
+        self.headers = headers
+        self.text = body.decode("utf-8", errors="replace")
+
+    @property
+    def is_redirect(self) -> bool:
+        return self.status_code in {301, 302, 303, 307, 308}
+
+    def json(self) -> Any:
+        return json.loads(self.text or "null")
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+class _StdlibClient:
+    """Small urllib client so the distributed plugin needs no Python packages."""
+
+    def __init__(self, api_key: str = "") -> None:
+        self.headers = {"X-API-Key": api_key} if api_key else {}
+        self._opener = build_opener(ProxyHandler({}), _NoRedirect())
+
+    @staticmethod
+    def _query_value(value: Any) -> str:
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        return str(value)
+
+    def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+        timeout: float = 60,
+    ) -> _Response:
+        query = {
+            key: self._query_value(value)
+            for key, value in (params or {}).items()
+            if value is not None
+        }
+        if query:
+            url = f"{url}{'&' if '?' in url else '?'}{urlencode(query)}"
+        body = None
+        headers = dict(self.headers)
+        if json is not None:
+            body = json_dumps(json, ensure_ascii=False).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        request = Request(url, data=body, headers=headers, method=method)
+        try:
+            with self._opener.open(request, timeout=timeout) as response:
+                return _Response(response.status, response.read(), response.headers)
+        except HTTPError as error:
+            return _Response(error.code, error.read(), error.headers)
+        except (URLError, TimeoutError, OSError) as error:
+            raise HarnessNetworkError(type(error).__name__) from error
+
+    def close(self) -> None:
+        return None
 
 
 def _schema(
@@ -238,9 +311,25 @@ class HarnessMCP:
         base_url: str,
         api_key: str | None = None,
         *,
-        client: httpx.Client | None = None,
+        fallback_url: str | None = None,
+        fallback_api_key: str | None = None,
+        client: Any | None = None,
     ) -> None:
-        parsed = urlparse(base_url.strip())
+        self.base = self._normalize_url(base_url)
+        self.api_key = api_key or ""
+        self.active_base = self.base
+        self._endpoints: list[dict[str, Any]] = []
+        self._add_endpoint(self.base, self.api_key, client)
+        if fallback_url:
+            normalized = self._normalize_url(fallback_url)
+            if normalized != self.base:
+                self._add_endpoint(normalized, fallback_api_key or self.api_key, client)
+        self.client = self._endpoints[0]["client"]
+
+    @staticmethod
+    def _normalize_url(value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        parsed = urlparse(normalized)
         if (
             parsed.scheme not in {"http", "https"}
             or not parsed.hostname
@@ -250,15 +339,19 @@ class HarnessMCP:
             or parsed.fragment
         ):
             raise ValueError("platform URL must be an http(s) base URL without credentials")
-        self.base = base_url.strip().rstrip("/")
-        self.api_key = api_key or ""
-        headers = {"X-API-Key": self.api_key} if self.api_key else {}
-        self.client = client or httpx.Client(
-            headers=headers,
-            trust_env=False,
-            follow_redirects=False,
-            timeout=60,
+        return normalized
+
+    def _add_endpoint(self, base: str, api_key: str, client: Any | None) -> None:
+        self._endpoints.append(
+            {
+                "base": base,
+                "client": client or _StdlibClient(api_key),
+            }
         )
+
+    def _ordered_endpoints(self) -> list[dict[str, Any]]:
+        active = [item for item in self._endpoints if item["base"] == self.active_base]
+        return active + [item for item in self._endpoints if item["base"] != self.active_base]
 
     # -- HTTP helpers -------------------------------------------------
     def _request(
@@ -270,16 +363,34 @@ class HarnessMCP:
         payload: dict[str, Any] | None = None,
         timeout: float = 60,
     ) -> tuple[bool, Any]:
-        try:
-            response = self.client.request(
-                method,
-                f"{self.base}{path}",
-                params={key: value for key, value in (params or {}).items() if value is not None},
-                json=payload,
-                timeout=timeout,
-            )
-        except httpx.HTTPError as error:
-            return False, {"error": f"platform unreachable: {type(error).__name__}"}
+        failures: list[str] = []
+        response: Any = None
+        for endpoint in self._ordered_endpoints():
+            try:
+                response = endpoint["client"].request(
+                    method,
+                    f"{endpoint['base']}{path}",
+                    params={
+                        key: value for key, value in (params or {}).items() if value is not None
+                    },
+                    json=payload,
+                    timeout=timeout,
+                )
+            except (HarnessNetworkError, OSError, TimeoutError) as error:
+                failures.append(f"{endpoint['base']}: {type(error).__name__}")
+                continue
+            except Exception as error:
+                if error.__class__.__module__.split(".", 1)[0] == "httpx":
+                    failures.append(f"{endpoint['base']}: {type(error).__name__}")
+                    continue
+                raise
+            self.active_base = endpoint["base"]
+            break
+        if response is None:
+            return False, {
+                "error": "platform unreachable on all configured addresses",
+                "tried": failures,
+            }
         if response.is_redirect:
             return False, {"error": "platform redirects are not allowed"}
         if response.status_code == 204:
@@ -294,6 +405,15 @@ class HarnessMCP:
                 return False, {"error": "platform rejected the API key", "status": 401}
             return False, {"status": response.status_code, "error": detail or body}
         return True, body
+
+    def close(self) -> None:
+        closed: set[int] = set()
+        for endpoint in self._endpoints:
+            client = endpoint["client"]
+            if id(client) in closed:
+                continue
+            closed.add(id(client))
+            client.close()
 
     def _publication_path(self, arguments: dict[str, Any]) -> str:
         target_type = arguments.get("target_type") or "deployment"
@@ -338,7 +458,10 @@ class HarnessMCP:
     def _platform_status(self, arguments: dict[str, Any]) -> dict[str, Any]:
         if arguments:
             raise ValueError("this tool accepts no arguments")
-        return self._result(*self._request("GET", "/api/v1/health"))
+        ok, payload = self._request("GET", "/api/v1/health")
+        if ok and isinstance(payload, dict):
+            payload = {**payload, "platform_url": self.active_base}
+        return self._result(ok, payload)
 
     def _open_platform_ui(self, arguments: dict[str, Any]) -> dict[str, Any]:
         if arguments:
@@ -346,7 +469,7 @@ class HarnessMCP:
         return self._result(
             True,
             {
-                "url": f"{self.base}/",
+                "url": f"{self.active_base}/",
                 "note": "Open this address in a browser and log in with the platform API key.",
             },
         )
@@ -523,19 +646,37 @@ class HarnessMCP:
         return response
 
 
+def _self_test(server: HarnessMCP) -> int:
+    result = server.call_tool("platform_status", {})
+    print(json.dumps(result, ensure_ascii=False))
+    return 0 if not result["isError"] else 1
+
+
 def main() -> None:
     base_url = os.environ.get("UNIFORM_PLATFORM_URL") or os.environ.get("UNIFORM_CONTROL_URL") or ""
     api_key = (
         os.environ.get("UNIFORM_PLATFORM_API_KEY") or os.environ.get("UNIFORM_API_TOKEN") or ""
     )
+    fallback_url = os.environ.get("UNIFORM_PLATFORM_FALLBACK_URL") or ""
+    fallback_api_key = os.environ.get("UNIFORM_PLATFORM_FALLBACK_API_KEY") or ""
+    if "--version" in sys.argv[1:]:
+        print(PLUGIN_VERSION)
+        return
     if not base_url:
         print(
             "UNIFORM_PLATFORM_URL is required, e.g. http://10.21.212.6:18180",
             file=sys.stderr,
         )
         raise SystemExit(2)
-    server = HarnessMCP(base_url, api_key)
+    server = HarnessMCP(
+        base_url,
+        api_key,
+        fallback_url=fallback_url or None,
+        fallback_api_key=fallback_api_key or None,
+    )
     try:
+        if "--self-test" in sys.argv[1:]:
+            raise SystemExit(_self_test(server))
         while line := sys.stdin.readline(1_000_001):
             if len(line) > 1_000_000:
                 break
@@ -551,7 +692,7 @@ def main() -> None:
             if response is not None:
                 print(json.dumps(response, ensure_ascii=False), flush=True)
     finally:
-        server.client.close()
+        server.close()
 
 
 if __name__ == "__main__":

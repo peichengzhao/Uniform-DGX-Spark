@@ -1,92 +1,155 @@
 # DeepSeek Harness 插件（平台 MCP）
 
-把「部署 / 发布模型」这套平台能力做成标准 **MCP server**，任何支持 MCP 的 AI 工具
-（DeepSeek Harness、Codex、Claude Code 等）装上后就能用自然语言操作这台 DGX Spark 上的平台。
+把「部署 / 发布模型」这套平台能力做成标准 **stdio MCP server**。同事在自己的电脑上装好后，
+DeepSeek Harness、Codex、Claude Code 等支持 MCP 的 AI 工具都能通过自然语言操作这台
+DGX Spark 上的 Uniform 平台。
 
-- 插件本身不带界面：需要看页面时调用 `open_platform_ui`，它会返回平台前端地址，用浏览器打开即可。
-- 插件不直连 Docker、不执行 shell，只调用平台 HTTP API（`X-API-Key`）。
-- 默认允许直接部署与发布，不做二次确认。
+插件只调用平台 HTTP API（`X-API-Key`），不执行 shell、不直连 Docker，也不要求同事拿到项目源码。
+它只需要 Python 3.10+，第三方依赖为零。
 
-## 一、平台侧准备
-
-插件在**别人的电脑**上时，那台电脑必须能访问平台的控制端口（默认 `18180`）。
+## 一、主机：开放控制台访问
 
 ### 局域网
 
-平台默认只监听 `127.0.0.1`，需要改成监听局域网地址，并**务必设置 API Key**：
+平台默认只监听 `127.0.0.1`。在本机运行：
 
 ```bash
-systemctl --user edit uniform-dgxspark.service
+bash host/enable-lan-access.sh --show-token
 ```
 
-写入：
+脚本会写入一个权限 `0600` 的 systemd drop-in，完成三件事：
 
-```ini
-[Service]
-Environment=UNIFORM_HOST=0.0.0.0
-Environment=UNIFORM_API_TOKEN=请换成长随机串
-```
+- 把监听地址改为 `0.0.0.0`，并同步改写实际 `ExecStart`（不只设置一个无效的环境变量）；
+- 生成随机 `UNIFORM_API_TOKEN`；
+- 重启 `uniform-dgxspark.service` 并做健康检查。
+
+把脚本打印的「局域网地址 + API Key」发给同事。以后查看 Key：
 
 ```bash
-systemctl --user daemon-reload
-systemctl --user restart uniform-dgxspark.service
+bash host/enable-lan-access.sh --show-token
 ```
 
-别人电脑访问 `http://<这台机器的局域网 IP>:18180`。
+轮换 Key：
+
+```bash
+bash host/enable-lan-access.sh --rotate-token --show-token
+```
 
 ### 外网
 
-平台没有内建「控制台外网入口」，`18180` 需要由你来打通，任选其一：
+平台没有内建控制台公网入口。`18180` 需要由主机侧打通，任选其一：
 
-- **VPN / 组网**：Tailscale、ZeroTier、WireGuard 等，对方用组网 IP 访问（最省事、最安全）；
-- **反向代理 / 隧道**：Cloudflare Tunnel、frp、nginx 反代到 `127.0.0.1:18180`，并把地址发给对方；
-  该地址要启用 HTTPS，且**必须**设置 `UNIFORM_API_TOKEN`，否则公网等于裸奔。
+- **VPN / 组网**：Tailscale、ZeroTier、WireGuard，最省事、最安全；
+- **HTTPS 隧道或反向代理**：Cloudflare Tunnel、frp、nginx 反代到 `127.0.0.1:18180`。
 
-> 平台页面里的「外网访问」开关只针对模型发布端口 `18181`，不包含控制台 `18180`。
-
-## 二、对方电脑安装插件
+使用 VPN/隧道域名时，把该主机名加入控制面白名单，否则发布类操作会返回
+`421 untrusted control-plane host`：
 
 ```bash
-cd uniform_dgxspark-plugin
-bash scripts/install-deepseek-harness-mcp.sh \
-  --url http://10.21.212.6:18180 \
-  --key '你的平台 API Key' \
-  --config ~/.deepseek/mcp.json
+bash host/enable-lan-access.sh \
+  --external-host uniform.example.com \
+  --show-token
 ```
 
-脚本会：
+`--external-host` 可重复，只加入白名单，不会自动开放防火墙或公网。
 
-1. 准备一个只含 `httpx` 的轻量运行环境（优先 venv，离线时回退到本机已有的 Python）；
-2. 复制插件入口并生成 `~/.local/bin/uniform-harness-mcp`；
-3. 写出 MCP 配置（`~/.local/share/uniform-harness-mcp/mcp.json`），`--config` 指定时会自动合并
-   JSON 或 TOML 配置；
-4. 调用一次 `platform_status` 做连通性自检。
+Cloudflare Tunnel 临时验证示例（URL 每次会变）：
 
-不确定 Harness 的配置路径时，去掉 `--config`，脚本会把可直接粘贴的配置片段打出来；
-也可以加 `--print-only` 只打印、不安装。
+```bash
+cloudflared tunnel --url http://127.0.0.1:18180
+```
 
-配置片段形如：
+拿到 `https://xxxx.trycloudflare.com` 后，用
+`--external-host xxxx.trycloudflare.com` 重跑主机脚本，再把这个 HTTPS 地址作为同事安装时的
+`--fallback-url`。长期使用应配置具名 Tunnel 或自有域名。
+
+> 平台控制台 `18180` 与模型发布端口 `18181` 是两个入口。
+> 插件里的 `enable_external_access` 只给「已发布的模型」开外网入口，不会暴露控制台。
+
+## 二、同事电脑：一条命令安装
+
+解压发布包后进入目录。Linux / macOS：
+
+```bash
+python3 install.py \
+  --url http://10.21.212.6:18180 \
+  --key '平台 API Key'
+```
+
+Windows PowerShell：
+
+```powershell
+python .\install.py --url http://10.21.212.6:18180 --key "平台 API Key"
+```
+
+主地址是局域网、备用地址是外网时：
+
+```bash
+python3 install.py \
+  --url http://10.21.212.6:18180 \
+  --fallback-url https://uniform.example.com \
+  --key '平台 API Key'
+```
+
+不想把 Key 写进命令历史：
+
+```bash
+python3 install.py --url http://10.21.212.6:18180 --key-file ~/uniform.key
+python3 install.py --url http://10.21.212.6:18180   # 交互输入
+```
+
+安装器会：
+
+1. 复制标准 MCP server 和跨平台启动器；
+2. 写出权限 `0600` 的 `mcp.json` 与 `platform.env`；
+3. 调用一次 `platform_status` 自检；主地址不通时自动尝试备用地址；
+4. 给出 Harness 配置片段，或在指定 `--config` 时自动合并 JSON/TOML。
+
+### 配置 Harness
+
+不同版本 DeepSeek Harness 的配置路径可能不同，安装器不会猜测并覆盖未知文件。
+不知道路径时先打印脱敏片段：
+
+```bash
+python3 install.py --url http://10.21.212.6:18180 --print-only
+```
+
+已知路径时自动合并：
+
+```bash
+python3 install.py --url http://10.21.212.6:18180 --config ~/.deepseek/mcp.json
+python3 install.py --url http://10.21.212.6:18180 --config ~/.config/deepseek/config.toml
+```
+
+合并前会生成 `.bak`（`--no-backup` 可关闭）。TOML 会识别已有的 `mcp_servers` 或
+`mcpServers` 根表。
+
+配置形态：
 
 ```json
 {
   "mcpServers": {
     "uniform-platform": {
-      "command": "/home/you/.local/bin/uniform-harness-mcp",
-      "args": [],
+      "command": "/usr/bin/python3",
+      "args": ["/home/you/.local/share/uniform-harness-mcp/uniform_harness_mcp.py"],
       "env": {
         "UNIFORM_PLATFORM_URL": "http://10.21.212.6:18180",
-        "UNIFORM_PLATFORM_API_KEY": "你的平台 API Key"
+        "UNIFORM_PLATFORM_API_KEY": "平台 API Key",
+        "UNIFORM_PLATFORM_FALLBACK_URL": "https://uniform.example.com",
+        "UNIFORM_PLATFORM_FALLBACK_API_KEY": "平台 API Key"
       }
     }
   }
 }
 ```
 
+`command` 使用安装时 Python 的绝对路径，不依赖同事机器上的 `PATH`。
+
 ## 三、插件提供的工具
 
 | 工具 | 作用 |
 | --- | --- |
-| `platform_status` | 平台健康检查 |
+| `platform_status` | 平台健康检查，返回实际使用的地址 |
 | `open_platform_ui` | 返回平台前端地址（页面就是平台自己的前端） |
 | `list_catalog_models` / `list_local_models` | 查在线模型 / 本机已下载模型 |
 | `deploy_model` | 创建部署（模型、端口、镜像、显存比例、本地路径等） |
@@ -97,16 +160,29 @@ bash scripts/install-deepseek-harness-mcp.sh \
 | `publication_status` / `rotate_publication_key` / `unpublish_service` | 发布状态、换 Key、撤销 |
 | `enable_external_access` / `disable_external_access` | 开关该服务的 Cloudflare 外网入口 |
 
-## 四、示例对话
+## 四、验证与排错
 
-- 「看看本机已经下载了哪些模型，挑一个 27B 的部署到 8000 端口，跑起来后告诉我健康状态。」
-- 「把刚部署的模型发布到局域网，给我 Base URL 和 Key，并顺便开外网访问。」
-- 「日志最后 200 行贴出来，判断为什么起不来。」
-- 「把 `<deployment-id>` 停掉并撤销发布。」
+```bash
+python3 ~/.local/share/uniform-harness-mcp/uniform_harness_mcp.py --self-test
+```
 
-## 五、排错
+Windows 默认目录是 `%LOCALAPPDATA%\uniform-harness-mcp`。
 
-- 自检报 `platform rejected the API key`：`--key` 与平台 `UNIFORM_API_TOKEN` 不一致；
-- 自检报 `platform unreachable`：地址/端口错、防火墙拦了、平台仍只监听 `127.0.0.1`；
-- 发布返回 `service is not running`：先 `wait_for_deployment` 等到 `running` 再发布；
-- 重新安装只需再跑一次脚本，会覆盖插件与配置（Key 会更新）。
+- `platform unreachable`：地址/端口错、防火墙拦截，或主机仍只监听 `127.0.0.1`；
+- `platform rejected the API key`：Key 与主机 `UNIFORM_API_TOKEN` 不一致；
+- `421 untrusted control-plane host`：外网/VPN 域名未加入
+  `UNIFORM_PUBLICATION_CONTROL_HOSTS`，在主机脚本加 `--external-host`；
+- Harness 看不到工具：确认 MCP 配置已加载并重启 Harness；
+- 重新安装：再运行一次安装器即可覆盖插件与配置。
+
+## 五、开发与打包
+
+发布包由源码自动生成，`uniform_harness_mcp.py` 不手工维护第二份：
+
+```bash
+python3 scripts/build-harness-plugin.py --out dist
+sha256sum -c dist/uniform-platform-plugin-1.1.0.sha256
+```
+
+产物包含 `manifest.json`、`install.py`、`install.sh`、`install.ps1`、主机脚本、README 和
+MCP 入口文件。构建过程会拒绝把 `.venv`、`.runtime`、`data/`、数据库或缓存打进去。

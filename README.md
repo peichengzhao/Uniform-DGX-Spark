@@ -52,3 +52,11 @@ Codex 在隔离副本中修改前端源码，完成语法与并发冲突检查�
 
 使用方法见 [用户指南](docs/USER_GUIDE.md)，系统设计见 [架构说明](docs/ARCHITECTURE.md)，
 外部 AI 工具接入见 [DeepSeek Harness 插件](docs/HARNESS_PLUGIN.md)，各阶段的测试方法位于 `docs/acceptance/`。
+
+外部 AI 工具插件可直接打包分发：
+
+```bash
+python3 scripts/build-harness-plugin.py --out dist
+```
+
+产物包含标准 MCP server、跨平台安装器和主机侧局域网/鉴权配置脚本。
