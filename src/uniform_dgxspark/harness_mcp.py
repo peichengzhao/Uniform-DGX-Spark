@@ -18,7 +18,7 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 TERMINAL_STATUSES = {"running", "stopped", "failed", "cancelled"}
-PLUGIN_VERSION = "1.2.1"
+PLUGIN_VERSION = "1.2.2"
 
 
 class HarnessNetworkError(RuntimeError):
@@ -304,7 +304,7 @@ def tool_definitions() -> list[dict[str, Any]]:
 class HarnessMCP:
     """Translate MCP tool calls into platform HTTP requests."""
 
-    server_name = "uniform_platform"
+    server_name = "uniform_dgxspark"
 
     def __init__(
         self,

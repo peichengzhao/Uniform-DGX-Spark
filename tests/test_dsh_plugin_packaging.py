@@ -13,7 +13,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 BUILDER = ROOT / "scripts" / "build-dsh-plugin.py"
 NODE = ROOT / ".runtime" / "node" / "bin" / "node"
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 
 
 def run(
@@ -79,10 +79,10 @@ def test_bundle_manifest_and_patch_are_installable(tmp_path: Path) -> None:
     )
     patch = yaml.load((package / "cordis.patch.yml").read_text(encoding="utf-8"), Loader=Loader)
     row = patch[0]["insert"][0]
-    assert row["id"] == "uniform-platform"
+    assert row["id"] == "uniform-dgxspark-platform"
     assert row["name"] == "@deepseek-ai/dsh-mcp-client"
     config = row["config"]
-    assert config["serverName"] == "uniform_platform"
+    assert config["serverName"] == "uniform_dgxspark"
     assert config["transport"] == "stdio"
     assert config["command"] == "process.execPath"
     assert config["cwd"] == "ctx.profileContext.dir"
@@ -159,7 +159,7 @@ def test_launcher_starts_a_standard_mcp_server(tmp_path: Path) -> None:
     stdout, stderr = process.communicate(requests, timeout=20)
     assert process.returncode == 0, stderr
     responses = [json.loads(line) for line in stdout.splitlines() if line.strip()]
-    assert responses[0]["result"]["serverInfo"]["name"] == "uniform_platform"
+    assert responses[0]["result"]["serverInfo"]["name"] == "uniform_dgxspark"
     tools = {tool["name"] for tool in responses[1]["result"]["tools"]}
     assert {"platform_status", "deploy_model", "publish_service"} <= tools
 

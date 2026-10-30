@@ -1,8 +1,8 @@
 - insert:
-    - id: uniform-platform
+    - id: uniform-dgxspark-platform
       name: '@deepseek-ai/dsh-mcp-client'
       config:
-        serverName: uniform_platform
+        serverName: uniform_dgxspark
         transport: stdio
         command: !!js process.execPath
         args:

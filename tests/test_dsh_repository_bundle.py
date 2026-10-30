@@ -16,7 +16,7 @@ NPM_CLI = ROOT / ".runtime" / "node" / "lib" / "node_modules" / "npm" / "bin" / 
 def test_repository_root_declares_dsh_bundle() -> None:
     manifest = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
     assert manifest["name"] == "uniform-dgxspark-platform"
-    assert manifest["version"] == "1.2.1"
+    assert manifest["version"] == "1.2.2"
     assert manifest["dsh"]["bundle"]["patch"] == "./cordis.patch.yml"
     assert (ROOT / "cordis.patch.yml").is_file()
 
@@ -30,7 +30,7 @@ def test_repository_root_declares_dsh_bundle() -> None:
     )
     patch = yaml.load((ROOT / "cordis.patch.yml").read_text(encoding="utf-8"), Loader=Loader)
     row = patch[0]["insert"][0]
-    assert row["id"] == "uniform-platform"
+    assert row["id"] == "uniform-dgxspark-platform"
     assert row["name"] == "@deepseek-ai/dsh-mcp-client"
     assert row["config"]["args"] == [
         "node_modules/uniform-dgxspark-platform/packaging/"
@@ -114,4 +114,4 @@ def test_repository_launcher_falls_back_to_source_runtime(tmp_path: Path) -> Non
     stdout, stderr = process.communicate(request, timeout=20)
     assert process.returncode == 0, stderr
     response = json.loads(stdout)
-    assert response["result"]["serverInfo"]["name"] == "uniform_platform"
+    assert response["result"]["serverInfo"]["name"] == "uniform_dgxspark"

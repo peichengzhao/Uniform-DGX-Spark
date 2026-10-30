@@ -5,7 +5,7 @@
 ## 同事电脑安装
 
 1. 在 DeepSeek Harness 的“插件”页面选择本地安装。
-2. 选择 `uniform-dgxspark-platform-1.2.1.tgz`。
+2. 选择 `uniform-dgxspark-platform-1.2.2.tgz`。
 3. 安装完成后，在 Harness 终端配置平台地址和 API Key：
 
 Linux / macOS：
@@ -39,7 +39,7 @@ Windows PowerShell：
 - Windows：`%APPDATA%\uniform-dgxspark\platform.env`
 
 保存后重启 DeepSeek Harness，或重新加载插件。工具会以
-`mcp__uniform_platform__*` 的形式出现。
+`mcp__uniform_dgxspark__*` 的形式出现。
 
 ## 运行要求
 

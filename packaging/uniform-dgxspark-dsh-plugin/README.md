@@ -5,7 +5,7 @@ This is a native **DeepSeek Harness bundle**. Its root `package.json` declares `
 ## Install on a colleague's computer
 
 1. Open the DeepSeek Harness Plugins page and choose a local package install.
-2. Select `uniform-dgxspark-platform-1.2.1.tgz`.
+2. Select `uniform-dgxspark-platform-1.2.2.tgz`.
 3. Configure the platform address and API key from a Harness terminal:
 
 ```bash
@@ -27,7 +27,7 @@ Add `--fallback-url https://uniform.example.com` when the platform is also reach
 - Linux / macOS: `~/.config/uniform-dgxspark/platform.env`
 - Windows: `%APPDATA%\uniform-dgxspark\platform.env`
 
-Restart or reload the Harness after configuration. Tools appear as `mcp__uniform_platform__*`.
+Restart or reload the Harness after configuration. Tools appear as `mcp__uniform_dgxspark__*`.
 
 The computer needs Python 3.10 or newer. Set `UNIFORM_PYTHON` to the interpreter path when it is not discoverable automatically.
 
