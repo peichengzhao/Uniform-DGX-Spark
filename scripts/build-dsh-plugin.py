@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE_DIR = ROOT / "packaging" / "uniform-dgxspark-dsh-plugin"
 HARNESS_SOURCE = ROOT / "src" / "uniform_dgxspark" / "harness_mcp.py"
 HOST_SCRIPT = ROOT / "packaging" / "uniform-platform-plugin" / "host" / "enable-lan-access.sh"
+ROOT_MANIFEST = ROOT / "package.json"
+ROOT_PATCH = ROOT / "cordis.patch.yml"
 FORBIDDEN_PARTS = {".git", ".venv", ".runtime", "__pycache__", "data", "node_modules"}
 EXECUTABLES = {"configure.mjs", "launcher.mjs", "host/enable-lan-access.sh"}
 REQUIRED_FILES = {
@@ -78,6 +80,19 @@ def compile_python(path: Path) -> None:
         compile(path.read_text(encoding="utf-8"), str(path), "exec")
     except (OSError, SyntaxError, ValueError) as error:
         raise BuildError(f"Python syntax check failed for {path.name}: {error}") from error
+
+
+def validate_repository_bundle(version: str) -> None:
+    try:
+        manifest = json.loads(ROOT_MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise BuildError(f"cannot read repository package.json: {error}") from error
+    if manifest.get("version") != version:
+        raise BuildError("repository package.json version does not match PLUGIN_VERSION")
+    if manifest.get("dsh", {}).get("bundle", {}).get("patch") != "./cordis.patch.yml":
+        raise BuildError("repository package.json must declare dsh.bundle.patch")
+    if not ROOT_PATCH.is_file():
+        raise BuildError("repository root cordis.patch.yml is missing")
 
 
 def check_javascript(node: str | None, staging: Path) -> None:
@@ -227,6 +242,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     version = read_version()
+    validate_repository_bundle(version)
     folder = archive_name(version)
     output = Path(args.out).expanduser().resolve()
     build_root = ROOT / "build" / "dsh-plugin"

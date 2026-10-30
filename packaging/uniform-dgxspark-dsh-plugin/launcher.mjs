@@ -6,7 +6,11 @@ import { fileURLToPath } from 'node:url'
 import { defaultConfigPath, readConfigFile } from './config.mjs'
 
 const packageDir = dirname(fileURLToPath(import.meta.url))
-const serverScript = join(packageDir, 'runtime', 'uniform_harness_mcp.py')
+const serverCandidates = [
+  join(packageDir, 'runtime', 'uniform_harness_mcp.py'),
+  join(packageDir, '..', '..', 'src', 'uniform_dgxspark', 'harness_mcp.py'),
+]
+const serverScript = serverCandidates.find(candidate => existsSync(candidate))
 const forwardedArgs = process.argv.slice(2)
 
 function fail(message, code = 2) {
@@ -37,7 +41,7 @@ function findPython() {
   })
 }
 
-if (!existsSync(serverScript)) fail(`Uniform MCP runtime is missing: ${serverScript}`, 78)
+if (!serverScript) fail(`Uniform MCP runtime is missing. Checked:\n${serverCandidates.join('\n')}`, 78)
 
 const configPath = process.env.UNIFORM_PLATFORM_CONFIG || defaultConfigPath()
 let fileValues = {}

@@ -1,0 +1,18 @@
+- insert:
+    - id: uniform-platform
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: uniform_platform
+        transport: stdio
+        command: !!js process.execPath
+        args:
+          - node_modules/uniform-dgxspark-platform/packaging/uniform-dgxspark-dsh-plugin/launcher.mjs
+          - --stdio
+        cwd: !!js ctx.profileContext.dir
+        env:
+          ELECTRON_RUN_AS_NODE: '1'
+        toolCallTimeoutMs: 120000
+        failOnStartupError: false
+        reconnect:
+          enabled: true
+          maxAttempts: 10

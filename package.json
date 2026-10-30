@@ -1,0 +1,32 @@
+{
+  "name": "uniform-dgxspark-platform",
+  "version": "1.2.1",
+  "private": true,
+  "type": "module",
+  "description": "DeepSeek Harness bundle for the Uniform DGX Spark model platform.",
+  "bin": {
+    "uniform-dgxspark-configure": "./packaging/uniform-dgxspark-dsh-plugin/configure.mjs"
+  },
+  "files": [
+    "cordis.patch.yml",
+    "packaging/uniform-dgxspark-dsh-plugin/config.mjs",
+    "packaging/uniform-dgxspark-dsh-plugin/launcher.mjs",
+    "packaging/uniform-dgxspark-dsh-plugin/configure.mjs",
+    "packaging/uniform-dgxspark-dsh-plugin/locale/*.json",
+    "packaging/uniform-dgxspark-dsh-plugin/meta/*.md",
+    "packaging/uniform-dgxspark-dsh-plugin/icon.svg",
+    "packaging/uniform-dgxspark-dsh-plugin/README.md",
+    "packaging/uniform-dgxspark-dsh-plugin/README.zh.md",
+    "src/uniform_dgxspark/harness_mcp.py",
+    "docs/HARNESS_PLUGIN.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml",
+      "listedByDefault": true
+    }
+  }
+}

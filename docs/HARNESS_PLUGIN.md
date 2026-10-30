@@ -69,16 +69,27 @@ cloudflared tunnel --url http://127.0.0.1:18180
 
 ### 1. 安装包
 
+可以直接在“插件”页面填写 Git 仓库地址：
+
+```text
+https://github.com/peichengzhao/Uniform-DGX-Spark.git
+```
+
+仓库根目录现在本身就是 DSH 组合包，不会再因为清单只在子目录里而被判定为
+`not-bundle`。
+
+也可以下载发布包后选择本地安装：
+
 在 DeepSeek Harness 的“插件”页面选择本地安装，然后选择：
 
 ```text
-uniform-dgxspark-platform-1.2.0.tgz
+uniform-dgxspark-platform-1.2.1.tgz
 ```
 
 也可以使用 CLI（路径必须是绝对路径）：
 
 ```bash
-dsh plugin --profile default install /absolute/path/uniform-dgxspark-platform-1.2.0.tgz
+dsh plugin --profile default install /absolute/path/uniform-dgxspark-platform-1.2.1.tgz
 ```
 
 > 不要再使用 `.zip` 安装到 DSH。包根缺少 `package.json` 和 `dsh.bundle.patch`
@@ -170,15 +181,15 @@ Windows PowerShell：
 ```bash
 NODE=.runtime/node/bin/node \
   python3 scripts/build-dsh-plugin.py --out dist --node "$NODE"
-sha256sum -c dist/uniform-dgxspark-platform-1.2.0.sha256
+sha256sum -c dist/uniform-dgxspark-platform-1.2.1.sha256
 ```
 
 主要产物：
 
 ```text
-dist/uniform-dgxspark-platform-1.2.0.tgz          # 安装到 DeepSeek Harness
-dist/uniform-dgxspark-platform-1.2.0-source.zip   # 源码审阅，不用于插件管理
-dist/uniform-dgxspark-platform-1.2.0.sha256
+dist/uniform-dgxspark-platform-1.2.1.tgz          # 安装到 DeepSeek Harness
+dist/uniform-dgxspark-platform-1.2.1-source.zip   # 源码审阅，不用于插件管理
+dist/uniform-dgxspark-platform-1.2.1.sha256
 ```
 
 构建会校验 `dsh.bundle.patch`、`files` 清单、Python/JavaScript 语法和禁止目录，

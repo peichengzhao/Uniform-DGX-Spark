@@ -18,7 +18,7 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 TERMINAL_STATUSES = {"running", "stopped", "failed", "cancelled"}
-PLUGIN_VERSION = "1.2.0"
+PLUGIN_VERSION = "1.2.1"
 
 
 class HarnessNetworkError(RuntimeError):
