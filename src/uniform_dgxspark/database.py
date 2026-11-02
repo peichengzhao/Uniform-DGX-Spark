@@ -139,7 +139,9 @@ class Database:
                     id TEXT PRIMARY KEY,
                     client_request_id TEXT,
                     deployment_id TEXT,
-                    provider TEXT NOT NULL CHECK(provider IN ('codex', 'claude', 'deepseek')),
+                    provider TEXT NOT NULL CHECK(
+                        provider IN ('codex', 'claude', 'deepseek', 'dsh')
+                    ),
                     task_type TEXT NOT NULL DEFAULT 'general',
                     display_name TEXT,
                     target_model_id TEXT,
@@ -468,7 +470,7 @@ class Database:
             ):
                 if column_name not in ai_session_columns:
                     connection.execute(f"ALTER TABLE ai_sessions ADD COLUMN {column_name} TEXT")
-            self._allow_deepseek_ai_sessions(connection)
+            self._allow_native_ai_sessions(connection)
             connection.execute(
                 "UPDATE ai_sessions SET task_type = 'deployment' "
                 "WHERE task_type = 'general' AND target_model_id IS NOT NULL"
@@ -516,13 +518,15 @@ class Database:
             connection.commit()
 
     @staticmethod
-    def _allow_deepseek_ai_sessions(connection: sqlite3.Connection) -> None:
+    def _allow_native_ai_sessions(connection: sqlite3.Connection) -> None:
         """Widen the ai_sessions provider CHECK constraint for older databases."""
         row = connection.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ai_sessions'"
         ).fetchone()
         original = (row["sql"] if row else None) or ""
-        if not original or "deepseek" in original:
+        if not original or "'dsh'" in original:
+            return
+        if re.search(r"CHECK\s*\(\s*provider\s+IN", original, re.IGNORECASE) is None:
             return
         rebuilt = re.sub(
             r"CREATE\s+TABLE\s+[\"`]?ai_sessions[\"`]?",
@@ -531,11 +535,14 @@ class Database:
             count=1,
             flags=re.IGNORECASE,
         )
-        rebuilt = rebuilt.replace(
-            "CHECK(provider IN ('codex', 'claude'))",
-            "CHECK(provider IN ('codex', 'claude', 'deepseek'))",
+        rebuilt = re.sub(
+            r"CHECK\s*\(\s*provider\s+IN\s*\([^)]*\)\s*\)",
+            "CHECK(provider IN ('codex', 'claude', 'deepseek', 'dsh'))",
+            rebuilt,
+            count=1,
+            flags=re.IGNORECASE,
         )
-        if "deepseek" not in rebuilt:
+        if "'dsh'" not in rebuilt:
             raise RuntimeError("could not widen the ai_sessions provider constraint")
         columns = ", ".join(
             row["name"] for row in connection.execute("PRAGMA table_info(ai_sessions)")

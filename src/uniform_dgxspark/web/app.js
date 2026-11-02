@@ -10,7 +10,7 @@ const statusLabels = {
   health_checking: "健康检查", running: "运行中", stopping: "停止中",
   stopped: "已停止", failed: "失败", cancelled: "已取消"
 };
-const aiProviderLabels = {codex:"Codex", claude:"Claude Code", deepseek:"DeepSeek Harness"};
+const aiProviderLabels = {codex:"Codex", claude:"Claude Code", deepseek:"DeepSeek Harness", dsh:"DSH 原生会话"};
 const aiProviderLabel = provider => aiProviderLabels[provider] || provider || "AI 工具";
 const activeStatuses = new Set(["queued","preflight","downloading_model","pulling_image","starting_container","loading_model","health_checking","stopping"]);
 const terminalStatuses = new Set(["stopped","failed","cancelled"]);
@@ -1174,11 +1174,12 @@ document.querySelector('#dataset-integration-form').addEventListener('submit',as
   event.preventDefault();const item=datasetIntegrationState.dialogItem;if(!item)return;
   const form=event.target,button=document.querySelector('#create-dataset-integration');button.disabled=true;
   const target=datasetIntegrationState.target;
-  const payload={provider:'codex',task_type:'dataset_integration',execution_mode:'interactive',client_request_id:datasetIntegrationState.requestId,accuracy_dataset_name:item.name,initial_prompt:form.elements.intent.value,display_name:`${item.pretty_name} · 数据集接入`.slice(0,120),ai_model:form.elements.ai_model.value.trim()||null,reasoning_effort:form.elements.reasoning_effort.value||null,...(target?{accuracy_target_type:target.target_type,accuracy_target_id:target.target_id}:{})};
+  const provider=form.elements.provider.value;
+  const payload={provider,task_type:'dataset_integration',execution_mode:'interactive',client_request_id:datasetIntegrationState.requestId,accuracy_dataset_name:item.name,initial_prompt:form.elements.intent.value,display_name:`${item.pretty_name} · 数据集接入`.slice(0,120),ai_model:form.elements.ai_model.value.trim()||null,reasoning_effort:form.elements.reasoning_effort.value||null,...(target?{accuracy_target_type:target.target_type,accuracy_target_id:target.target_id}:{})};
   try{
     const session=await api('/api/v1/ai/sessions',{method:'POST',body:JSON.stringify(payload)});
     document.querySelector('#dataset-integration-dialog').close();await loadDatasetIntegrations();
-    await openDatasetIntegrationConversation(session.id);toast('Codex 已开始检查；确认前不会请求模型');
+    await openDatasetIntegrationConversation(session.id);toast(`${aiProviderLabel(provider)} 已开始检查；确认前不会请求模型`);
   }catch(error){document.querySelector('#dataset-integration-error').textContent=error.message;toast(`接入会话：${error.message}`,true);}
   finally{button.disabled=false;}
 });
@@ -1246,11 +1247,12 @@ function renderDatasetIntegrationConversation(data){
   const host=document.querySelector('#dataset-integration-chat-messages');
   const backendMessages=data?.messages||[];
   datasetIntegrationState.chatLocalMessages=datasetIntegrationState.chatLocalMessages.filter(local=>!backendMessages.some(message=>message.role===local.role&&message.text===local.text));
-  const messages=[...backendMessages,...datasetIntegrationState.chatLocalMessages].sort((left,right)=>((left.created_at?new Date(left.created_at).getTime():0)-(right.created_at?new Date(right.created_at).getTime():0)));
+  const orderedMessages=[...backendMessages,...datasetIntegrationState.chatLocalMessages].sort((left,right)=>((left.created_at?new Date(left.created_at).getTime():0)-(right.created_at?new Date(right.created_at).getTime():0)));
+  const messages=groupAiReasoningMessages(orderedMessages);
   const status=data?.status||document.querySelector('#dataset-integration-terminal-status').textContent;
-  const awaitingReply=['starting','running'].includes(status)&&(messages.length?messages[messages.length-1].role==='user':true);
-  const signature=JSON.stringify([status,data?.available,data?.notice,messages.map(message=>[message.id,message.role,message.text.length,message.created_at])]);
-  document.querySelector('#dataset-integration-chat-availability').textContent=data?.notice||'只显示你和 Codex 的文字消息，工具调用与运行细节已隐藏；需要审批时请切换原始终端。';
+  const awaitingReply=aiConversationAwaitingReply(messages,status);
+  const signature=JSON.stringify([status,data?.available,data?.notice,messages.map(message=>[message.id,message.role,message.phase||'',message.text.length,message.created_at])]);
+  document.querySelector('#dataset-integration-chat-availability').textContent=data?.notice||'只显示你和 AI 的文字消息，工具调用与运行细节已隐藏；需要审批时请切换原始终端。';
   view.classList.toggle('active',awaitingReply);
   view.classList.toggle('inactive',!awaitingReply);
   if(signature===datasetIntegrationState.chatSignature)return;
@@ -1259,13 +1261,13 @@ function renderDatasetIntegrationConversation(data){
   const providerLabel=aiProviderLabel(data?.provider||'codex');
   let html='';
   if(!messages.length){
-    html=`<div class="ai-chat-empty">${awaitingReply?'<span class="waiting-spinner"></span>':''}<strong>${awaitingReply?'Codex 正在处理接入任务':'暂无可用消息'}</strong><span>${escapeHtml(data?.notice||(awaitingReply?'完成后结果会自动显示在这里。':'这个接入会话还没有可显示的文字消息。'))}</span></div>`;
+    html=`<div class="ai-chat-empty">${awaitingReply?'<span class="waiting-spinner"></span>':''}<strong>${awaitingReply?`${escapeHtml(providerLabel)} 正在处理接入任务`:'暂无可用消息'}</strong><span>${escapeHtml(data?.notice||(awaitingReply?'完成后结果会自动显示在这里。':'这个接入会话还没有可显示的文字消息。'))}</span></div>`;
   }else{
     html=messages.map(message=>{
-      const isUser=message.role==='user',time=aiChatTimestamp(message.created_at);
-      return `<article class="ai-chat-message ${isUser?'user':'assistant'}"><div class="ai-chat-role">${escapeHtml(isUser?'你':providerLabel)}${time?` · ${escapeHtml(time)}`:''}</div><div class="ai-chat-bubble">${renderAiChatMessageBody(message)}</div></article>`;
+      const isUser=message.role==='user',isReasoning=aiMessageIsReasoning(message),time=aiChatTimestamp(message.created_at);
+      return `<article class="ai-chat-message ${isUser?'user':'assistant'}${isReasoning?' reasoning':''}"><div class="ai-chat-role">${escapeHtml(isUser?'你':isReasoning?'深度思考':providerLabel)}${time?` · ${escapeHtml(time)}`:''}</div><div class="ai-chat-bubble">${renderAiChatMessageBody(message)}</div></article>`;
     }).join('');
-    if(awaitingReply)html+='<div class="ai-chat-pending"><span class="waiting-spinner"></span><span>Codex 正在检查或执行，完成后会自动显示结果…</span></div>';
+    if(awaitingReply)html+=`<div class="ai-chat-pending"><span class="waiting-spinner"></span><span>${escapeHtml(providerLabel)} 正在检查或执行，完成后会自动显示结果…</span></div>`;
   }
   host.innerHTML=html;
   if(nearBottom)requestAnimationFrame(()=>{host.scrollTop=host.scrollHeight;});
@@ -1343,7 +1345,7 @@ async function openDatasetIntegrationConversation(id){
   terminal.onResize(size=>{if(socket.readyState===WebSocket.OPEN)socket.send(JSON.stringify({type:'resize',columns:size.cols,rows:size.rows}));});
   updateDatasetIntegrationControls(session.status);
   setDatasetIntegrationView(datasetIntegrationState.chatView,{focus:false});
-  clearInterval(datasetIntegrationState.chatTimer);datasetIntegrationState.chatTimer=setInterval(()=>{if(datasetIntegrationState.sessionId===id&&datasetIntegrationState.chatView==='chat')loadDatasetIntegrationConversation(true);},1800);
+  clearInterval(datasetIntegrationState.chatTimer);datasetIntegrationState.chatTimer=setInterval(()=>{if(datasetIntegrationState.sessionId===id&&datasetIntegrationState.chatView==='chat')loadDatasetIntegrationConversation(true);},1000);
   panel.scrollIntoView({behavior:'smooth',block:'start'});
 }
 function closeDatasetIntegrationConversation(){
@@ -1385,13 +1387,14 @@ document.querySelectorAll('[data-ai-accuracy-close]').forEach(button=>button.add
 document.querySelector('#ai-accuracy-form').addEventListener('submit',async event=>{
   event.preventDefault();const form=event.target,button=document.querySelector('#create-ai-accuracy');
   if(!aiAccuracyTarget)return;
-  const payload={provider:'codex',task_type:'accuracy_evaluation',execution_mode:'interactive',
+  const provider=form.elements.provider.value;
+  const payload={provider,task_type:'accuracy_evaluation',execution_mode:'interactive',
     client_request_id:aiAccuracyTarget.client_request_id,
     accuracy_target_type:aiAccuracyTarget.target_type,accuracy_target_id:aiAccuracyTarget.target_id,
     accuracy_sample_budget:Number(form.elements.sample_budget.value),initial_prompt:form.elements.intent.value,
     ai_model:form.elements.ai_model.value.trim()||null,reasoning_effort:form.elements.reasoning_effort.value||null,
     display_name:`${document.querySelector('#ai-accuracy-target-label').value} · AI 精度评测`.slice(0,120)};
-  button.disabled=true;button.textContent='正在启动 Codex…';
+  button.disabled=true;button.textContent=`正在启动 ${aiProviderLabel(provider)}…`;
   try{await api('/api/v1/ai/sessions',{method:'POST',body:JSON.stringify(payload)});
     aiAccuracyDialog.close();await loadAiAccuracyWorkflows();toast('AI 正在制定方案，确认前不会执行评测');
   }catch(error){document.querySelector('#ai-accuracy-error').textContent=error.message;}
@@ -2388,11 +2391,69 @@ function renderAiChatMarkdown(value) {
 
 function renderAiChatMessageBody(message) {
   const text=String(message.text||"");
+  if(aiMessageIsReasoning(message)) return renderAiReasoningMessage(message);
   if(message.role==="user"&&text.length>700){
     return `${renderAiChatMarkdown(text.slice(0,420))}<details class="ai-chat-message-details"><summary>展开完整任务说明（${text.length} 字）</summary><div>${renderAiChatMarkdown(text)}</div></details>`;
   }
   return renderAiChatMarkdown(text);
 }
+
+function aiMessageIsReasoning(message) {
+  return message?.role==="assistant"&&String(message.phase||"").startsWith("reasoning");
+}
+
+function aiReasoningTurnId(message) {
+  if(message?.role!=="assistant") return null;
+  const match=String(message.id||"").match(/^dsh-reasoning-(.+)-\d+-\d+$/);
+  return match?match[1]:null;
+}
+
+function groupAiReasoningMessages(messages) {
+  const grouped=[],groups=new Map();
+  for(const message of messages){
+    const turn=aiReasoningTurnId(message);
+    if(turn===null){grouped.push(message);continue;}
+    const key=`dsh-reasoning-turn-${turn}`;
+    let group=groups.get(key);
+    if(!group){
+      group={id:key,role:"assistant",text:"",phase:"reasoning_done",created_at:message.created_at,_reasoningActive:false};
+      groups.set(key,group);
+      grouped.push(group);
+    }
+    const text=String(message.text||"").trim();
+    if(text) group.text=group.text?`${group.text}\n\n${text}`:text;
+    if(message.phase==="reasoning") group._reasoningActive=true;
+    const messageTime=new Date(message.created_at).getTime();
+    const groupTime=new Date(group.created_at).getTime();
+    if(Number.isFinite(messageTime)&&(!Number.isFinite(groupTime)||messageTime<groupTime)) group.created_at=message.created_at;
+  }
+  for(const group of groups.values()) group.phase=group._reasoningActive?"reasoning":"reasoning_done";
+  return grouped;
+}
+
+function aiConversationAwaitingReply(messages,status) {
+  if(!["starting","running"].includes(status)) return false;
+  let lastUserIndex=-1;
+  messages.forEach((message,index)=>{if(message.role==="user")lastUserIndex=index;});
+  const hasAnswer=messages.some((message,index)=>index>lastUserIndex&&message.role==="assistant"&&!aiMessageIsReasoning(message));
+  return !hasAnswer;
+}
+
+const aiReasoningOpenState=new Map();
+
+function renderAiReasoningMessage(message) {
+  const id=String(message.id||"reasoning"),done=message.phase!=="reasoning";
+  const open=aiReasoningOpenState.has(id)?aiReasoningOpenState.get(id):!done;
+  const label=done?"已深度思考":'<span class="waiting-spinner"></span>正在思考';
+  const hint=done?(open?"点击收起":"点击展开"):"思考完成后将自动折叠";
+  return `<details class="ai-chat-reasoning ${done?'done':'active'}" data-ai-reasoning="${escapeHtml(id)}"${open?" open":""}><summary><span class="ai-chat-reasoning-label">${label}</span><span class="ai-chat-reasoning-hint">${escapeHtml(hint)}</span></summary><div class="ai-chat-reasoning-content">${renderAiChatMarkdown(String(message.text||""))}</div></details>`;
+}
+
+document.addEventListener("toggle",event=>{
+  const details=event.target;
+  if(!(details instanceof HTMLDetailsElement)||!details.matches("details[data-ai-reasoning]")) return;
+  aiReasoningOpenState.set(details.dataset.aiReasoning,details.open);
+},true);
 
 function aiChatTimestamp(value) {
   if(!value) return "";
@@ -2405,15 +2466,16 @@ function renderAiConversation(data) {
   const host=document.querySelector("#ai-chat-messages");
   const backendMessages=data?.messages||[];
   state.aiChatLocalMessages=state.aiChatLocalMessages.filter(local=>!backendMessages.some(message=>message.role===local.role&&message.text===local.text));
-  const messages=[...backendMessages,...state.aiChatLocalMessages].sort((left,right)=>{
+  const orderedMessages=[...backendMessages,...state.aiChatLocalMessages].sort((left,right)=>{
     const leftTime=left.created_at?new Date(left.created_at).getTime():0;
     const rightTime=right.created_at?new Date(right.created_at).getTime():0;
     return leftTime-rightTime;
   });
+  const messages=groupAiReasoningMessages(orderedMessages);
   const status=data?.status||"";
   const running=["starting","running"].includes(status);
-  const awaitingReply=running&&(messages.length?messages[messages.length-1].role==="user":true);
-  const signature=JSON.stringify([status,data?.available,data?.notice,messages.map(message=>[message.id,message.role,message.text.length,message.created_at])]);
+  const awaitingReply=aiConversationAwaitingReply(messages,status);
+  const signature=JSON.stringify([status,data?.available,data?.notice,messages.map(message=>[message.id,message.role,message.phase||'',message.text.length,message.created_at])]);
   document.querySelector("#ai-chat-availability").textContent=data?.notice||"只显示你和 AI 的文字消息，工具调用与运行细节已隐藏；需要审批时请切换原始终端。";
   view.classList.toggle("active",awaitingReply);
   view.classList.toggle("inactive",!awaitingReply);
@@ -2422,18 +2484,18 @@ function renderAiConversation(data) {
   const nearBottom=host.scrollHeight-host.scrollTop-host.clientHeight<90;
   state.aiConversationSignature=signature;
   const providerLabel=aiProviderLabel(data?.provider);
-  const emptyTitle=awaitingReply?"AI 正在处理任务":"暂无可用消息";
+  const emptyTitle=awaitingReply?`${providerLabel} 正在处理任务`:"暂无可用消息";
   const emptyText=data?.notice||(awaitingReply?"完成后结果会自动显示在这里。":"这个会话还没有可显示的文字消息。");
   let html="";
   if(!messages.length){
     html=`<div class="ai-chat-empty">${awaitingReply?'<span class="waiting-spinner"></span>':''}<strong>${escapeHtml(emptyTitle)}</strong><span>${escapeHtml(emptyText)}</span></div>`;
   } else {
     html=messages.map(message=>{
-      const isUser=message.role==="user";
+      const isUser=message.role==="user",isReasoning=aiMessageIsReasoning(message);
       const time=aiChatTimestamp(message.created_at);
-      return `<article class="ai-chat-message ${isUser?"user":"assistant"}"><div class="ai-chat-role">${escapeHtml(isUser?"你":providerLabel)}${time?` · ${escapeHtml(time)}`:""}</div><div class="ai-chat-bubble">${renderAiChatMessageBody(message)}</div></article>`;
+      return `<article class="ai-chat-message ${isUser?"user":"assistant"}${isReasoning?" reasoning":""}"><div class="ai-chat-role">${escapeHtml(isUser?"你":isReasoning?"深度思考":providerLabel)}${time?` · ${escapeHtml(time)}`:""}</div><div class="ai-chat-bubble">${renderAiChatMessageBody(message)}</div></article>`;
     }).join("");
-    if(awaitingReply) html+='<div class="ai-chat-pending"><span class="waiting-spinner"></span><span>AI 正在执行，完成后会自动显示结果…</span></div>';
+    if(awaitingReply) html+=`<div class="ai-chat-pending"><span class="waiting-spinner"></span><span>${escapeHtml(providerLabel)} 正在继续处理，完成后会自动显示结果…</span></div>`;
   }
   host.innerHTML=html;
   if(!hadMessages||nearBottom) requestAnimationFrame(()=>{host.scrollTop=host.scrollHeight;});
@@ -2523,10 +2585,25 @@ function clearAiTerminalPanel() {
 
 function updateExecutionModeNotice() { const full=document.querySelector("#ai-execution-mode").value==="full_access"; const acknowledgement=document.querySelector("#full-access-ack"); acknowledgement.hidden=!full; acknowledgement.querySelector("input").required=full; if(!full) acknowledgement.querySelector("input").checked=false; }
 document.querySelector("#ai-execution-mode").addEventListener("change",updateExecutionModeNotice);
-function updateAiProviderOptions() { const codex=document.querySelector('#ai-form [name="provider"]').value==="codex"; const effort=document.querySelector("#ai-reasoning-effort"); effort.disabled=!codex; if(!codex) effort.value=""; }
-document.querySelector('#ai-form [name="provider"]').addEventListener("change",updateAiProviderOptions);
+const dshReasoningEfforts=new Set(["low","high","max"]);
+function updateAiProviderOptions(form=document.querySelector("#ai-form")) {
+  const provider=form?.elements.provider?.value;
+  const effort=form?.elements.reasoning_effort;
+  if(!provider||!effort) return;
+  const supportsEffort=["codex","dsh"].includes(provider);
+  effort.disabled=!supportsEffort;
+  for(const option of effort.options) {
+    const restricted=provider==="dsh"&&Boolean(option.value)&&!dshReasoningEfforts.has(option.value);
+    option.disabled=restricted;
+  }
+  if(!supportsEffort||(provider==="dsh"&&!dshReasoningEfforts.has(effort.value))) effort.value="";
+}
+for(const selector of ["#ai-form","#dataset-integration-form","#ai-accuracy-form"]) {
+  const form=document.querySelector(selector);
+  form?.elements.provider?.addEventListener("change",()=>updateAiProviderOptions(form));
+  if(form) updateAiProviderOptions(form);
+}
 updateExecutionModeNotice();
-updateAiProviderOptions();
 
 function setTerminalTitle(session) {
   const providerName=aiProviderLabel(session.provider);
@@ -2651,7 +2728,7 @@ async function openTerminal(sessionId) {
   terminal.onData(data => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({type:"input", data})); });
   terminal.onResize(size => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({type:"resize", columns:size.cols, rows:size.rows})); });
   setTimeout(() => { fitAddon.fit(); if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({type:"resize", columns:terminal.cols, rows:terminal.rows})); }, 100);
-  state.aiConversationTimer=setInterval(()=>{if(state.aiSessionId===sessionId&&state.aiChatView==="chat")loadAiConversation(true);},1800);
+  state.aiConversationTimer=setInterval(()=>{if(state.aiSessionId===sessionId&&state.aiChatView==="chat")loadAiConversation(true);},1000);
   await Promise.all([loadAiAudit(), loadAiResult(), loadAutoResume(), loadAiConversation()]); panel.scrollIntoView({behavior:"smooth", block:"start"});
 }
 

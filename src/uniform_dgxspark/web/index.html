@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="dark">
     <title>Uniform · DGX Spark</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="/static/app.css?v=20261027-feishu-pkce">
+    <link rel="stylesheet" href="/static/app.css?v=20261102-dsh-reasoning-group">
     <link rel="stylesheet" href="/static/vendor/node_modules/@xterm/xterm/css/xterm.css">
   </head>
   <body>
@@ -312,7 +312,7 @@
           <dialog id="dataset-integration-dialog" class="accuracy-config-dialog">
             <form id="dataset-integration-form" method="dialog">
               <div class="dialog-head"><div><p class="eyebrow">CODEX DATASET ONBOARDING</p><h2>AI 一键接入数据集</h2><p>先检查并提出方案，确认前不下载数据或请求模型。已验证的数据集可直接复用，无需修改平台代码。</p></div><button type="button" class="icon-button" data-integration-close aria-label="关闭">×</button></div>
-              <div class="dialog-body"><label>数据集<input id="dataset-integration-dataset" readonly></label><label>验证目标<input id="dataset-integration-target" readonly></label><label>接入需求<textarea name="intent" rows="3" maxlength="12000" required></textarea></label><div class="form-grid"><label>Codex 模型（留空沿用 CLI）<input name="ai_model" maxlength="128"></label><label>思考强度<select name="reasoning_effort"><option value="">沿用 CLI</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option><option value="ultra">ultra</option></select></label></div><div id="dataset-integration-note" class="security-notice"></div><div id="dataset-integration-error" class="form-error" role="alert"></div></div>
+              <div class="dialog-body"><label>数据集<input id="dataset-integration-dataset" readonly></label><label>验证目标<input id="dataset-integration-target" readonly></label><label>接入需求<textarea name="intent" rows="3" maxlength="12000" required></textarea></label><div class="form-grid"><label>AI 工具<select name="provider"><option value="codex">Codex</option><option value="dsh">DSH 原生会话</option></select></label><label>AI 模型（留空使用工具默认）<input name="ai_model" maxlength="128"></label><label>思考强度<select name="reasoning_effort"><option value="">工具默认</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option><option value="ultra">ultra</option></select></label></div><div id="dataset-integration-note" class="security-notice"></div><div id="dataset-integration-error" class="form-error" role="alert"></div></div>
               <div class="dialog-actions"><button type="button" class="secondary" data-integration-close>取消</button><button id="create-dataset-integration" type="submit" class="primary">启动 Codex 接入助手</button></div>
             </form>
           </dialog>
@@ -326,8 +326,9 @@
                 <label>你想评测什么？<textarea name="intent" rows="4" maxlength="12000" required placeholder="帮我评测这个模型的数学和中文能力，先做小规模测试。"></textarea></label>
                 <label>最大样本预算（包含试跑）<input name="sample_budget" type="number" min="1" max="10000" value="100" required></label>
                 <div class="form-grid">
-                  <label>Codex 模型（留空沿用当前 CLI 设置）<input name="ai_model" maxlength="128" placeholder="沿用平台 AI 模型"></label>
-                  <label>思考强度<select name="reasoning_effort"><option value="">沿用 CLI 设置</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option><option value="ultra">ultra</option></select></label>
+                  <label>AI 工具<select name="provider"><option value="codex">Codex</option><option value="dsh">DSH 原生会话</option></select></label>
+                  <label>AI 模型（留空使用工具默认）<input name="ai_model" maxlength="128" placeholder="沿用平台 AI 模型"></label>
+                  <label>思考强度<select name="reasoning_effort"><option value="">工具默认</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option><option value="ultra">ultra</option></select></label>
                 </div>
                 <div class="security-notice">Codex 只使用已选模型的专用评测工具。评分由固定版本 EvalScope 完成；首次数据集下载可能耗时。样本上限按子集计算，不是完整官方成绩。</div>
                 <div id="ai-accuracy-error" class="form-error" role="alert"></div>
@@ -573,8 +574,8 @@
           <label>AI 模型 <small>留空则跟随 CLI 默认</small><input name="ai_model" list="ai-model-options" placeholder="例如：gpt-5.6-sol"><datalist id="ai-model-options"><option value="gpt-5.6-sol"><option value="gpt-5.6-terra"><option value="gpt-5.6-luna"></datalist></label>
         </div>
         <div class="form-grid">
-          <label>AI 工具<select name="provider" required><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek">DeepSeek Harness</option></select></label>
-          <label>思考强度 <small>仅 Codex</small><select id="ai-reasoning-effort" name="reasoning_effort"><option value="">模型默认</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="xhigh">超高</option><option value="max">最大</option><option value="ultra">极限</option></select></label>
+          <label>AI 工具<select name="provider" required><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek">DeepSeek Harness</option><option value="dsh">DSH 原生会话</option></select></label>
+          <label>思考强度 <small>Codex / DSH</small><select id="ai-reasoning-effort" name="reasoning_effort"><option value="">模型默认</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="xhigh">超高</option><option value="max">最大</option><option value="ultra">极限</option></select></label>
         </div>
         <label>执行模式<select id="ai-execution-mode" name="execution_mode"><option value="autonomous" selected>自主执行（推荐）</option><option value="interactive">交互审批</option><option value="full_access">完整宿主机权限</option></select></label>
         <label id="ai-deployment-topology-field" hidden>部署拓扑<select name="deployment_topology"><option value="single_node" selected>单机（跳过多机核验）</option><option value="multi_node">多机（加载 SSH / RDMA / NCCL 教程）</option><option value="auto">由现有部署上下文判断</option></select></label>
@@ -785,6 +786,6 @@
       </form>
     </dialog>
     <div id="toast" class="toast"></div>
-    <script type="module" src="/static/app.js?v=20261027-feishu-pkce"></script>
+    <script type="module" src="/static/app.js?v=20261102-dsh-reasoning-group"></script>
   </body>
 </html>

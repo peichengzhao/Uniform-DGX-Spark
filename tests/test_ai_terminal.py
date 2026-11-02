@@ -283,12 +283,16 @@ def test_legacy_ai_sessions_table_accepts_deepseek_after_migration(tmp_path: Pat
             ).fetchone()["count"]
             == 1
         )
-        connection.execute(
+        connection.executemany(
             "INSERT INTO ai_sessions("
             "id, provider, status, initial_prompt, reference_urls_json, workspace_path,"
             " created_at, updated_at"
-            ") VALUES ('deepseek-session', 'deepseek', 'exited', 'prompt', '[]',"
-            " '/tmp/deepseek', '2026-10-30T00:00:00Z', '2026-10-30T00:00:00Z')"
+            ") VALUES (?, ?, 'exited', 'prompt', '[]', ?,"
+            " '2026-10-30T00:00:00Z', '2026-10-30T00:00:00Z')",
+            [
+                ("deepseek-session", "deepseek", "/tmp/deepseek"),
+                ("dsh-session", "dsh", "/tmp/dsh"),
+            ],
         )
         connection.commit()
 

@@ -391,7 +391,7 @@ class AIBenchmarkResultDocument(BaseModel):
 class AISessionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["codex", "claude", "deepseek"]
+    provider: Literal["codex", "claude", "deepseek", "dsh"]
     task_type: Literal[
         "deployment",
         "diagnosis",
@@ -487,8 +487,8 @@ class AISessionCreate(BaseModel):
             raise ValueError("target_revision requires a target model")
         if self.deployment_id and self.target_model_id:
             raise ValueError("deployment_id and target_model_id are mutually exclusive")
-        if self.provider != "codex" and self.reasoning_effort:
-            raise ValueError("reasoning_effort is only supported for Codex sessions")
+        if self.provider not in {"codex", "dsh"} and self.reasoning_effort:
+            raise ValueError("reasoning_effort is only supported for Codex and DSH sessions")
         if self.execution_mode == "full_access" and not self.full_access_acknowledged:
             raise ValueError("full_access_acknowledged must be true for full_access mode")
         has_benchmark_target = bool(self.benchmark_target_type and self.benchmark_target_id)
@@ -501,8 +501,8 @@ class AISessionCreate(BaseModel):
         if self.task_type == "accuracy_evaluation":
             if not self.accuracy_target_type or not self.accuracy_target_id:
                 raise ValueError("AI accuracy evaluation requires a selected target")
-            if self.provider != "codex" or self.execution_mode == "full_access":
-                raise ValueError("AI accuracy evaluation requires scoped Codex execution")
+            if self.provider not in {"codex", "dsh"} or self.execution_mode == "full_access":
+                raise ValueError("AI accuracy evaluation requires scoped Codex or DSH execution")
             if (
                 self.target_model_id
                 or self.deployment_id
@@ -516,8 +516,10 @@ class AISessionCreate(BaseModel):
                 raise ValueError("dataset integration requires a selected dataset")
             if bool(self.accuracy_target_type) != bool(self.accuracy_target_id):
                 raise ValueError("integration target type and ID must be provided together")
-            if self.provider != "codex" or self.execution_mode != "interactive":
-                raise ValueError("dataset integration requires scoped interactive Codex")
+            if self.provider not in {"codex", "dsh"} or self.execution_mode != "interactive":
+                raise ValueError(
+                    "dataset integration requires scoped interactive Codex or DSH execution"
+                )
             if (
                 self.target_model_id
                 or self.deployment_id
@@ -535,7 +537,7 @@ class AISessionCreate(BaseModel):
 class AISessionRead(BaseModel):
     id: str
     deployment_id: str | None
-    provider: Literal["codex", "claude", "deepseek"]
+    provider: Literal["codex", "claude", "deepseek", "dsh"]
     task_type: Literal[
         "deployment",
         "diagnosis",
@@ -594,9 +596,9 @@ class AIConversationMessage(BaseModel):
 
 class AIConversationRead(BaseModel):
     session_id: str
-    provider: Literal["codex", "claude", "deepseek"]
+    provider: Literal["codex", "claude", "deepseek", "dsh"]
     status: Literal["starting", "running", "exited", "failed", "stopped", "interrupted"]
-    source: Literal["codex_rollout", "claude_history", "none"]
+    source: Literal["codex_rollout", "claude_history", "dsh_native", "none"]
     available: bool
     messages: list[AIConversationMessage]
     notice: str | None = None
@@ -620,11 +622,12 @@ AI_PROVIDER_LABELS = {
     "codex": "Codex",
     "claude": "Claude Code",
     "deepseek": "DeepSeek Harness",
+    "dsh": "DSH 原生会话",
 }
 
 
 class AIProviderRead(BaseModel):
-    provider: Literal["codex", "claude", "deepseek"]
+    provider: Literal["codex", "claude", "deepseek", "dsh"]
     available: bool
     executable: str | None
     version: str | None
@@ -766,7 +769,7 @@ class AIDeploymentReuseRequest(BaseModel):
     target_revision: str | None = Field(default=None, max_length=255)
     target_local_path: str | None = Field(default=None, max_length=4096)
     deployment_topology: Literal["single_node", "multi_node"] = "single_node"
-    provider: Literal["codex", "claude", "deepseek"] = "codex"
+    provider: Literal["codex", "claude", "deepseek", "dsh"] = "codex"
     display_name: str | None = Field(default=None, max_length=120)
     ai_model: str | None = Field(default=None, max_length=128)
     reasoning_effort: Literal["low", "medium", "high", "xhigh", "max", "ultra"] | None = None
@@ -787,8 +790,8 @@ class AIDeploymentReuseRequest(BaseModel):
                 raise ValueError("local reuse requires an absolute target_local_path")
         elif self.target_local_path:
             raise ValueError("target_local_path is only valid for a local model")
-        if self.provider != "codex" and self.reasoning_effort:
-            raise ValueError("reasoning_effort is only supported for Codex sessions")
+        if self.provider not in {"codex", "dsh"} and self.reasoning_effort:
+            raise ValueError("reasoning_effort is only supported for Codex and DSH sessions")
         if self.execution_mode == "full_access" and not self.full_access_acknowledged:
             raise ValueError("full_access_acknowledged must be true for full_access mode")
 

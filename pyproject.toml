@@ -9,6 +9,7 @@ description = "Local vLLM deployment manager for NVIDIA DGX Spark"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  "deepseek-harness-sdk==0.2.1rc2",
   "fastapi>=0.116,<0.117",
   "huggingface-hub[hf-xet]>=0.34,<0.35",
   "httpx>=0.28,<0.29",

@@ -14,6 +14,7 @@ from .schemas import AIConversationMessage, AIConversationRead, AISessionRead
 
 _MAX_MESSAGES = 300
 _MAX_MESSAGE_CHARS = 40_000
+_DSH_REASONING_ID = re.compile(r"^dsh-reasoning-(\d+)-(\d+)-(\d+)$")
 _APPROVAL_MARKERS = (
     ">>> APPROVAL REQUEST",
     ">>> APPROVAL REQUEST END",
@@ -77,8 +78,10 @@ class _LogCursor:
                 continue
             if provider == "codex":
                 self._consume_codex(record)
-            else:
+            elif provider == "claude":
                 self._consume_claude(record)
+            elif provider == "dsh":
+                self._consume_dsh(record)
 
     def _append(
         self,
@@ -113,6 +116,47 @@ class _LogCursor:
                 order=len(self.messages),
             )
         )
+
+    def _upsert(
+        self,
+        *,
+        key: str,
+        role: str,
+        text: str,
+        created_at: datetime | None,
+        phase: str | None,
+    ) -> None:
+        normalized = text.strip()
+        if not normalized:
+            return
+        if len(normalized) > _MAX_MESSAGE_CHARS:
+            normalized = normalized[:_MAX_MESSAGE_CHARS].rstrip() + "\n\n…（内容过长，已截断）"
+        existing = next((record for record in self.messages if record.key == key), None)
+        if existing is None:
+            self._append(
+                key=key,
+                role=role,
+                text=normalized,
+                created_at=created_at,
+                phase=phase,
+            )
+            return
+        old_signature = (
+            existing.role,
+            existing.text,
+            existing.created_at.isoformat() if existing.created_at else None,
+        )
+        self.seen_signatures.discard(old_signature)
+        existing.text = normalized
+        existing.phase = phase
+        if existing.created_at is None:
+            existing.created_at = created_at
+        signature = (
+            existing.role,
+            existing.text,
+            existing.created_at.isoformat() if existing.created_at else None,
+        )
+        self.seen_signatures.add(signature)
 
     def _consume_codex(self, record: dict[str, Any]) -> None:
         record_type = record.get("type")
@@ -182,6 +226,30 @@ class _LogCursor:
             phase=None,
         )
 
+    def _consume_dsh(self, record: dict[str, Any]) -> None:
+        if record.get("type") != "message":
+            return
+        role = record.get("role")
+        text = record.get("text")
+        if role not in {"user", "assistant"} or not isinstance(text, str):
+            return
+        normalized = text.strip()
+        if not normalized:
+            return
+        timestamp = _parse_timestamp(record.get("created_at"))
+        message_id = _optional_text(record.get("id"))
+        key = message_id or (
+            f"dsh:{self.path}:{self.offset}:{role}:{timestamp}"
+        )
+        phase = _optional_text(record.get("phase"))
+        self._upsert(
+            key=key,
+            role=role,
+            text=normalized,
+            created_at=timestamp,
+            phase=phase,
+        )
+
 
 class AIConversationReader:
     """Read only the human-readable messages a local AI CLI writes to disk."""
@@ -208,6 +276,10 @@ class AIConversationReader:
             elif session.provider == "claude":
                 records, found = self._read_claude(Path(session.workspace_path))
                 source = "claude_history"
+                unsupported_notice = None
+            elif session.provider == "dsh":
+                records, found = self._read_dsh(Path(session.workspace_path))
+                source = "dsh_native"
                 unsupported_notice = None
             else:
                 records, found = [], False
@@ -314,6 +386,17 @@ class AIConversationReader:
             records.extend(cursor.messages)
         return _sort_and_dedupe(records), bool(candidates)
 
+    def _read_dsh(self, workspace: Path) -> tuple[list[_MessageRecord], bool]:
+        path = workspace / "dsh-conversation.jsonl"
+        if not path.is_file() or path.is_symlink():
+            return [], False
+        cursor = self._cursors.get(path)
+        if cursor is None:
+            cursor = _LogCursor(path=path)
+            self._cursors[path] = cursor
+        cursor.refresh("dsh")
+        return _group_dsh_reasoning(_sort_and_dedupe(cursor.messages)), True
+
     def _codex_home(self) -> Path:
         if self.codex_home is not None:
             return self.codex_home.expanduser()
@@ -351,6 +434,41 @@ def _sort_and_dedupe(records: Iterable[_MessageRecord]) -> list[_MessageRecord]:
         seen_signatures.add(signature)
         result.append(record)
     return result
+
+
+def _group_dsh_reasoning(records: list[_MessageRecord]) -> list[_MessageRecord]:
+    """Render one turn's DSH steps as one live reasoning card, like the native UI."""
+    grouped: list[_MessageRecord] = []
+    positions: dict[str, int] = {}
+    for record in records:
+        match = _DSH_REASONING_ID.match(record.key)
+        if match is None:
+            grouped.append(record)
+            continue
+        turn = match.group(1)
+        key = f"dsh-reasoning-{turn}"
+        position = positions.get(key)
+        if position is None:
+            positions[key] = len(grouped)
+            grouped.append(
+                _MessageRecord(
+                    key=key,
+                    role="assistant",
+                    text=record.text,
+                    created_at=record.created_at,
+                    phase=record.phase,
+                    order=record.order,
+                )
+            )
+            continue
+        target = grouped[position]
+        if record.text and record.text not in target.text:
+            target.text = f"{target.text}\n\n{record.text}"
+        if record.phase == "reasoning":
+            target.phase = "reasoning"
+        elif target.phase != "reasoning":
+            target.phase = "reasoning_done"
+    return grouped
 
 
 def _read_first_json_object(path: Path) -> dict[str, Any] | None:

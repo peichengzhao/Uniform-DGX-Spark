@@ -29,8 +29,36 @@ cd /home/zaki/workspace/uniform_dgxspark
 
 ### AI 工具
 
-“一键部署”的“AI 工具”支持 Codex、Claude Code 和 DeepSeek Harness。平台用
-`<CLI> --version` 探测可用性，未安装的工具在页面中显示为不可用并置灰。
+“一键部署”的“AI 工具”支持 Codex、Claude Code、DeepSeek Harness CLI 和
+**DSH 原生会话**。平台用 `<CLI> --version` 探测前三个 CLI，并单独探测官方
+`deepseek-harness-sdk`；不可用的工具会在页面中显示并置灰。
+
+DSH 原生会话与旧的 `deepseek` CLI 是两条独立接入：
+
+- 原生会话通过 Python SDK 启动受管的 `dsh --profile sdk`，保留持久化 Session；精简对话会实时
+  显示原生思考过程，并在正式回答出现后自动折叠。工具调用、命令与错误仍可在原始终端查看。
+- 不需要把 `dsh` 加入 PATH，`uv sync` 安装的 SDK 会携带匹配版本的运行时。
+- 使用 DeepSeek 官方模型路由，默认模型为 `deepseek-v4-flash`。在平台服务环境中设置
+  `DEEPSEEK_API_KEY`；兼容端点可通过 `DEEPSEEK_BASE_URL` 指定。
+- 默认模型的思考强度支持 `low`、`high`、`max`。留空时使用模型自身默认值。
+- 数据集接入和 AI 精度评测都可以选择 Codex 或 DSH 原生会话；这两类受限任务会把 DSH
+  工具权限限制为只读，业务操作仍只能通过平台 MCP 工具完成。
+
+若平台由 systemd 管理，可通过用户级 drop-in 注入凭证，避免把 Key 写进项目文件：
+
+```bash
+systemctl --user edit uniform-dgxspark.service
+```
+
+在打开的覆盖配置中加入：
+
+```ini
+[Service]
+Environment=DEEPSEEK_API_KEY=你的_Key
+```
+
+保存后执行 `systemctl --user daemon-reload && systemctl --user restart uniform-dgxspark.service`。
+缺少凭证时，DSH 精简对话会明确显示 `MISSING_CREDENTIAL`，不会假装产生模型结果。
 
 接入 DeepSeek Harness 时：
 
@@ -40,9 +68,8 @@ cd /home/zaki/workspace/uniform_dgxspark
    平台会按顺序拼成 `deepseek <ARGS> [--model 模型] <任务说明>`；
 4. 修改环境变量后执行 `systemctl --user daemon-reload && systemctl --user restart uniform-dgxspark.service`。
 
-DeepSeek Harness 的参数命名由该工具自身决定，平台只追加 `--model` 和末尾的任务说明；
-其他开关请通过 `UNIFORM_DEEPSEEK_ARGS` 显式给出。思考强度仅对 Codex 生效，
-准确率评测和数据集接入仍只允许 Codex 执行。
+DeepSeek Harness CLI 的参数命名由该工具自身决定，平台只追加 `--model` 和末尾的任务说明；
+其他开关请通过 `UNIFORM_DEEPSEEK_ARGS` 显式给出。思考强度对 Codex 和 DSH 原生会话生效。
 
 ### Hugging Face
 
@@ -196,6 +223,8 @@ Quick Tunnel 地址由 Cloudflare 临时分配，`cloudflared` 或平台重启�
 | `UNIFORM_CLAUDE_BINARY` | `claude` | Claude Code CLI 路径 |
 | `UNIFORM_DEEPSEEK_BINARY` | `deepseek` | DeepSeek Harness CLI 路径 |
 | `UNIFORM_DEEPSEEK_ARGS` | 空 | 启动 DeepSeek Harness 时追加的参数，例如 `--auto-approve` |
+| `DEEPSEEK_API_KEY` | 空 | DSH 原生会话访问 DeepSeek 官方模型使用的凭证 |
+| `DEEPSEEK_BASE_URL` | DeepSeek 官方端点 | DSH 原生会话可选的兼容 API 基础地址 |
 | `UNIFORM_AI_SESSIONS_ENABLED` | `true` | 是否允许启动 AI 终端 |
 | `UNIFORM_UI_EDITING_ENABLED` | `true` | 是否允许右键 AI 修改前端界面 |
 | `UNIFORM_BENCHMARK_HISTORY_CSV` | `~/Downloads/模型性能测试 - Sheet1.csv` | AI 自定义评测完成后追加的历史表格；仅接受现有表头格式 |
@@ -286,9 +315,10 @@ ModelScope 拉取权重；只有 Hugging Face 条目的模型则直接使用 Hug
 默认配置，也可以从常用候选中选择或直接填写模型 ID。思考强度仅对 Codex 生效，并以会话级
 参数传入，不修改用户的全局 Codex 配置。
 
-AI 会话窗口提供“精简对话”和“原始终端”两种视图。精简视图只呈现用户消息、AI 最终答复和
-等待状态，隐藏工具调用、思考过程、ANSI 控制符和运行日志，并可直接在输入框中继续追问；
-需要观察命令执行、处理审批或排查底层输出时，可随时切回原始终端。精度评测页面的数据集接入
+AI 会话窗口提供“精简对话”和“原始终端”两种视图。精简视图呈现用户消息、AI 最终答复和
+等待状态，并隐藏工具调用、ANSI 控制符和运行日志；DSH 原生会话还会实时显示可折叠的思考卡片，
+正式回答出现后自动收起。你可以直接在输入框中继续追问，需要观察命令执行、处理审批或排查底层输出时，
+可随时切回原始终端。精度评测页面的数据集接入
 对话使用同一套视图切换和输入方式，确认方案、真实试跑与启用仍由平台按钮控制。
 
 已结束或已停止的会话可以存档，存档会话默认隐藏，勾选“显示已存档”后可以查看和恢复。

@@ -39,7 +39,7 @@ def console_auto_open_enabled() -> bool:
     return os.environ.get("UNIFORM_AUTO_OPEN_UI", "1").strip().lower() not in _DISABLED_VALUES
 
 
-def console_url(server: "HarnessMCP") -> str:
+def console_url(server: HarnessMCP) -> str:
     """Console address to open; `UNIFORM_UI_URL` overrides the active endpoint."""
     override = os.environ.get("UNIFORM_UI_URL", "").strip()
     return override or f"{server.active_base}/"
@@ -57,7 +57,7 @@ def open_console(url: str, reason: str) -> bool:
     return opened
 
 
-def open_console_for_request(server: "HarnessMCP", request: Any) -> None:
+def open_console_for_request(server: HarnessMCP, request: Any) -> None:
     """Open the console on the first tool call and on every `open_platform_ui`."""
     global CONSOLE_OPENED
     if not isinstance(request, dict) or request.get("method") != "tools/call":

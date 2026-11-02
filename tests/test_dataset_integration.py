@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from test_accuracy_api import create_target, settings_for
 from test_accuracy_identity import make_cached_runner, wait_terminal
 
-from uniform_dgxspark.database import Database
+from uniform_dgxspark.database import SCHEMA_VERSION, Database
 from uniform_dgxspark.dataset_integration_mcp import DatasetIntegrationMCP
 from uniform_dgxspark.main import create_app
 from uniform_dgxspark.schemas import AccuracyRunCreate, AISessionCreate
@@ -302,7 +302,7 @@ def test_schema_23_upgrade_retains_existing_accuracy_tables(tmp_path: Path) -> N
         assert [
             r[0]
             for r in connection.execute("SELECT version FROM schema_migrations ORDER BY version")
-        ] == [23, 25]
+        ] == [23, SCHEMA_VERSION]
         assert connection.execute("SELECT * FROM accuracy_dataset_integrations").fetchall() == []
         assert connection.execute("SELECT * FROM accuracy_runs").fetchall() == []
 

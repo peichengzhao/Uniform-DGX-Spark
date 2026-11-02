@@ -11,7 +11,8 @@ FastAPI control service
   │    └─ Hugging Face preferred + ModelScope fallback + publisher avatars
   ├─ resumable model cache
   ├─ Docker vLLM runtime
-  ├─ AI session store + PTY manager (Codex / Claude Code / DeepSeek Harness)
+  ├─ AI session store + PTY/native manager
+  │    ├─ DSH native Session through deepseek-harness-sdk (stdio JSON-RPC)
   │    ├─ Codex CLI (workspace-write + untrusted approvals)
   │    ├─ Claude Code CLI (default permission mode)
   │    ├─ DeepSeek Harness CLI (operator-supplied flags)
