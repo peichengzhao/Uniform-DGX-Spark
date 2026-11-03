@@ -510,6 +510,14 @@ def test_gateway_page_exposes_models_callers_and_usage_center(tmp_path: Path) ->
         assert 'id="gateway-usage-model"' in html
         assert 'id="gateway-usage-caller"' in html
         assert 'id="gateway-usage-token"' in html
+        assert 'data-copy-publication="gateway-key-secret"' in html
         script = client.get("/static/app.js").text
         assert "data-gateway-delete-consumer" in script
         assert "token.model_ids" in script
+        for fragment in (
+            'document.addEventListener("click"',
+            'event.target.closest("[data-copy-publication]")',
+            "window.isSecureContext",
+            'document.execCommand("copy")',
+        ):
+            assert fragment in script

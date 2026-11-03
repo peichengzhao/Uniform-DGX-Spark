@@ -282,20 +282,33 @@ async function runServicePublicationAction(action) {
 async function copyPublicationValue(inputId,label) {
   const input=document.querySelector(`#${inputId}`);
   if(!input) return;
+  const copyWithSelection=()=>{
+    input.focus();
+    input.select();
+    input.setSelectionRange(0,input.value.length);
+    const copied=document.execCommand("copy");
+    input.setSelectionRange(0,0);
+    input.blur();
+    if(!copied) throw new Error("浏览器拒绝了剪贴板操作，请手动选择并复制");
+  };
   try {
-    if(navigator.clipboard?.writeText) {
+    if(window.isSecureContext&&navigator.clipboard?.writeText) {
       try { await navigator.clipboard.writeText(input.value); }
-      catch (_) { input.select(); document.execCommand("copy"); input.setSelectionRange(0,0); }
-    } else { input.select(); document.execCommand("copy"); input.setSelectionRange(0,0); }
+      catch (_) { copyWithSelection(); }
+    } else { copyWithSelection(); }
     toast(`${label} 已复制`);
   } catch(error) { toast(`复制失败：${error.message}`,true); }
 }
 
 document.querySelector("#service-publication-content").addEventListener("click",event=>{
   const actionButton=event.target.closest("[data-publication-action]");
-  if(actionButton) { runServicePublicationAction(actionButton.dataset.publicationAction); return; }
+  if(actionButton) runServicePublicationAction(actionButton.dataset.publicationAction);
+});
+document.addEventListener("click",event=>{
   const copyButton=event.target.closest("[data-copy-publication]");
-  if(copyButton) copyPublicationValue(copyButton.dataset.copyPublication,copyButton.dataset.copyLabel);
+  if(!copyButton) return;
+  event.preventDefault();
+  copyPublicationValue(copyButton.dataset.copyPublication,copyButton.dataset.copyLabel);
 });
 document.querySelectorAll("[data-publication-close]").forEach(button=>button.addEventListener("click",()=>{if(!state.servicePublicationBusy) servicePublicationDialog.close();}));
 servicePublicationDialog.addEventListener("cancel",event=>{if(state.servicePublicationBusy) event.preventDefault();});
