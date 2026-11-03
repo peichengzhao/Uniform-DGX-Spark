@@ -61,6 +61,7 @@ class PublicationTarget:
     target_type: str
     target_id: str
     label: str
+    model_key: str
     port: int
     container_name: str
     running: bool
@@ -255,6 +256,7 @@ class ServicePublicationManager:
                     target_id,
                     api_key_hash=self._hash_api_key(api_key),
                     key_hint=self._key_hint(api_key),
+                    model_key=target.model_key,
                 )
             except Exception:
                 self.stop_gateway_if_idle()
@@ -275,6 +277,7 @@ class ServicePublicationManager:
                 target_id,
                 api_key_hash=self._hash_api_key(api_key),
                 key_hint=self._key_hint(api_key),
+                model_key=target.model_key,
             )
             self._record_event_best_effort(
                 target, "publication_key_rotated", publication.publication_id
@@ -322,6 +325,7 @@ class ServicePublicationManager:
                     target_type=target_type,
                     target_id=target_id,
                     label=deployment.display_name or deployment.model_id,
+                    model_key=deployment.model_id,
                     port=deployment.parameters.port,
                     container_name=self.runtime.container_name(deployment.id),
                     running=running,
@@ -336,6 +340,7 @@ class ServicePublicationManager:
                     target_type=target_type,
                     target_id=target_id,
                     label=session.display_name,
+                    model_key=session.target_model_id or f"ai_session:{target_id}",
                     port=result.port,
                     container_name=result.container_name,
                     running=running,
@@ -668,7 +673,9 @@ class ServicePublicationManager:
                 if token.quota_exhausted():
                     return None, (429, "API key token quota is exhausted")
                 if not self.gateway_store.can_access_publication(
-                    token.token_id, publication.publication_id
+                    token.token_id,
+                    publication.publication_id,
+                    publication.model_key,
                 ):
                     return None, (403, "API key is not allowed to access this model")
                 return GatewayRequestIdentity(token.token_id, token.consumer_id), None
@@ -699,7 +706,9 @@ class ServicePublicationManager:
             except GatewayTokenNotFound:
                 return False
             return token.is_usable() and self.gateway_store.can_access_publication(
-                token.token_id, publication.publication_id
+                token.token_id,
+                publication.publication_id,
+                publication.model_key,
             )
         return bool(
             identity.legacy_key_hash

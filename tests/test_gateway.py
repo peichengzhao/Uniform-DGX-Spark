@@ -101,6 +101,7 @@ def test_gateway_api_issues_independent_keys_and_disables_legacy_key(tmp_path: P
         models = client.get("/api/v1/gateway/models")
         assert models.status_code == 200
         assert models.json()[0]["publication_id"] == publication.publication_id
+        assert models.json()[0]["model_id"] == "org/test-model"
 
         caller = client.post(
             "/api/v1/gateway/callers",
@@ -124,6 +125,7 @@ def test_gateway_api_issues_independent_keys_and_disables_legacy_key(tmp_path: P
         token = created.json()
         api_key = token["api_key"]
         assert api_key.startswith("udgs_")
+        assert token["model_ids"] == ["org/test-model"]
         assert client.post(
             "/api/v1/gateway/callers", json={"name": "without action"}
         ).status_code == 403
@@ -146,6 +148,216 @@ def test_gateway_api_issues_independent_keys_and_disables_legacy_key(tmp_path: P
         assert publication is not None
         assert publication.api_key_hash == ""
         assert publication.key_hint == ""
+
+
+def test_gateway_key_survives_model_redeployment(tmp_path: Path, monkeypatch) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as client:
+        runtime = client.app.state.runtime
+        runtime.is_running = lambda _target_id: True
+        first_deployment = _running_deployment(
+            client, model_id="org/reusable-model", port=19080
+        )
+        store = client.app.state.publication_store
+        first_publication = store.enable(
+            "deployment",
+            first_deployment,
+            api_key_hash=hashlib.sha256(b"first-legacy").hexdigest(),
+            key_hint="first",
+            model_key="org/reusable-model",
+        )
+        consumer_id = client.post(
+            "/api/v1/gateway/callers",
+            json={"name": "复用测试"},
+            headers=ACTION,
+        ).json()["consumer_id"]
+        created = client.post(
+            f"/api/v1/gateway/callers/{consumer_id}/tokens",
+            json={
+                "name": "长期 Key",
+                "publication_ids": [first_publication.publication_id],
+            },
+            headers=ACTION,
+        ).json()
+        assert created["model_ids"] == ["org/reusable-model"]
+
+        payload = {
+            "id": "completion-reuse",
+            "model": "reusable-model",
+            "usage": {"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8},
+        }
+        monkeypatch.setattr(
+            "uniform_dgxspark.services.publication.httpx.AsyncClient",
+            lambda **_kwargs: _FakeAsyncClient({}, _JsonUpstream(payload)),
+        )
+        manager = client.app.state.publication_manager
+        with TestClient(manager.gateway_app) as gateway:
+            assert gateway.post(
+                f"/{first_publication.publication_id}/v1/chat/completions",
+                json={"model": "reusable-model", "messages": []},
+                headers={"Authorization": f"Bearer {created['api_key']}"},
+            ).status_code == 200
+
+        assert store.disable("deployment", first_deployment)
+        second_deployment = _running_deployment(
+            client, model_id="org/reusable-model", port=19082
+        )
+        second_publication = store.enable(
+            "deployment",
+            second_deployment,
+            api_key_hash=hashlib.sha256(b"second-legacy").hexdigest(),
+            key_hint="second",
+            model_key="org/reusable-model",
+        )
+        assert second_publication.publication_id != first_publication.publication_id
+
+        with TestClient(manager.gateway_app) as gateway:
+            assert gateway.post(
+                f"/{first_publication.publication_id}/v1/chat/completions",
+                json={"model": "reusable-model", "messages": []},
+                headers={"Authorization": f"Bearer {created['api_key']}"},
+            ).status_code == 401
+            reused = gateway.post(
+                f"/{second_publication.publication_id}/v1/chat/completions",
+                json={"model": "reusable-model", "messages": []},
+                headers={"Authorization": f"Bearer {created['api_key']}"},
+            )
+            assert reused.status_code == 200
+
+        callers = client.get("/api/v1/gateway/callers").json()
+        assert callers["items"][0]["tokens"][0]["model_ids"] == [
+            "org/reusable-model"
+        ]
+
+
+def test_gateway_legacy_publication_scope_is_backfilled(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as client:
+        runtime = client.app.state.runtime
+        runtime.is_running = lambda _target_id: True
+        deployment_id = _running_deployment(client, model_id="org/backfill-model")
+        publication = client.app.state.publication_store.enable(
+            "deployment",
+            deployment_id,
+            api_key_hash=hashlib.sha256(b"legacy").hexdigest(),
+            key_hint="legacy",
+            model_key="org/backfill-model",
+        )
+        consumer_id = client.post(
+            "/api/v1/gateway/callers",
+            json={"name": "迁移测试"},
+            headers=ACTION,
+        ).json()["consumer_id"]
+        created = client.post(
+            f"/api/v1/gateway/callers/{consumer_id}/tokens",
+            json={
+                "name": "迁移 Key",
+                "publication_ids": [publication.publication_id],
+            },
+            headers=ACTION,
+        ).json()
+        database = client.app.state.database
+        with database.connect() as connection:
+            connection.execute("DELETE FROM gateway_token_models")
+            connection.execute(
+                "UPDATE service_publications SET model_key = '' WHERE publication_id = ?",
+                (publication.publication_id,),
+            )
+            connection.commit()
+        database.initialize()
+        with database.connect() as connection:
+            model_key = connection.execute(
+                "SELECT model_key FROM service_publications WHERE publication_id = ?",
+                (publication.publication_id,),
+            ).fetchone()["model_key"]
+            model_ids = [
+                row["model_id"]
+                for row in connection.execute(
+                    "SELECT model_id FROM gateway_token_models WHERE token_id = ?",
+                    (created["token_id"],),
+                ).fetchall()
+            ]
+        assert model_key == "org/backfill-model"
+        assert model_ids == ["org/backfill-model"]
+
+
+def test_gateway_caller_permanent_delete_removes_keys_and_keeps_usage(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as client:
+        runtime = client.app.state.runtime
+        runtime.is_running = lambda _target_id: True
+        deployment_id = _running_deployment(client)
+        publication = client.app.state.publication_store.enable(
+            "deployment",
+            deployment_id,
+            api_key_hash=hashlib.sha256(b"legacy").hexdigest(),
+            key_hint="legacy",
+            model_key="org/test-model",
+        )
+        consumer_id = client.post(
+            "/api/v1/gateway/callers",
+            json={"name": "待删除调用方"},
+            headers=ACTION,
+        ).json()["consumer_id"]
+        token = client.post(
+            f"/api/v1/gateway/callers/{consumer_id}/tokens",
+            json={
+                "name": "待删除 Key",
+                "publication_ids": [publication.publication_id],
+            },
+            headers=ACTION,
+        ).json()
+        client.app.state.gateway_store.record_usage(
+            token_id=token["token_id"],
+            consumer_id=consumer_id,
+            publication_id=publication.publication_id,
+            publication_label="test-model",
+            target_type="deployment",
+            target_id=deployment_id,
+            model="test-model",
+            endpoint="v1/chat/completions",
+            method="POST",
+            status_code=200,
+            prompt_tokens=2,
+            completion_tokens=3,
+            total_tokens=5,
+            usage_source="upstream",
+            latency_ms=10,
+            request_id="delete-test",
+        )
+
+        deleted = client.delete(
+            f"/api/v1/gateway/callers/{consumer_id}/permanent", headers=ACTION
+        )
+        assert deleted.status_code == 204
+        assert client.get("/api/v1/gateway/callers").json()["total"] == 0
+        database = client.app.state.database
+        with database.connect() as connection:
+            assert connection.execute("SELECT COUNT(*) FROM gateway_tokens").fetchone()[0] == 0
+            assert (
+                connection.execute("SELECT COUNT(*) FROM gateway_token_models").fetchone()[0]
+                == 0
+            )
+
+        usage = client.get(
+            "/api/v1/gateway/usage", params={"consumer_id": consumer_id}
+        ).json()
+        assert usage["total"] == 1
+        assert usage["items"][0]["consumer_name"] == "未分配调用方"
+        assert usage["items"][0]["total_tokens"] == 5
+        assert client.delete(
+            f"/api/v1/gateway/callers/{consumer_id}/permanent", headers=ACTION
+        ).status_code == 404
+
+        manager = client.app.state.publication_manager
+        with TestClient(manager.gateway_app) as gateway:
+            assert gateway.post(
+                f"/{publication.publication_id}/v1/chat/completions",
+                json={"model": "test-model", "messages": []},
+                headers={"Authorization": f"Bearer {token['api_key']}"},
+            ).status_code == 401
 
 
 def test_gateway_key_scope_revocation_and_usage_filters(tmp_path: Path, monkeypatch) -> None:
@@ -298,3 +510,6 @@ def test_gateway_page_exposes_models_callers_and_usage_center(tmp_path: Path) ->
         assert 'id="gateway-usage-model"' in html
         assert 'id="gateway-usage-caller"' in html
         assert 'id="gateway-usage-token"' in html
+        script = client.get("/static/app.js").text
+        assert "data-gateway-delete-consumer" in script
+        assert "token.model_ids" in script

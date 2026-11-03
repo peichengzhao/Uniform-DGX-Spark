@@ -406,8 +406,10 @@ function gatewayDate(value) {
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
 }
 
-function gatewayModelName(publicationId) {
-  return state.gatewayModels.find(model => model.publication_id === publicationId)?.display_name || publicationId || "未命名模型";
+function gatewayModelName(modelId) {
+  const model = state.gatewayModels.find(item => item.model_id === modelId)
+    || state.gatewayModels.find(item => item.publication_id === modelId);
+  return model?.display_name || modelId || "未命名模型";
 }
 
 function gatewayTokenState(token) {
@@ -456,11 +458,11 @@ function renderGatewayCallers() {
     const tokens = caller.tokens || [];
     const rows = tokens.length ? tokens.map(token => {
       const stateInfo = gatewayTokenState(token);
-      const models = token.publication_ids.map(gatewayModelName).join("、") || "未授权模型";
+      const models = (token.model_ids?.length ? token.model_ids : token.publication_ids).map(gatewayModelName).join("、") || "未授权模型";
       const quota = token.token_limit == null ? `${gatewayNumber(token.used_tokens)} / 不限额` : `${gatewayNumber(token.used_tokens)} / ${gatewayNumber(token.token_limit)}`;
       return `<div class="gateway-token-row"><div><strong>${escapeHtml(token.name)}</strong><code>${escapeHtml(token.key_hint)}</code><small>${escapeHtml(models)}</small></div><div><span class="gateway-token-label">Token 用量</span><strong>${quota}</strong><small>${token.expires_at ? `到期：${escapeHtml(gatewayDate(token.expires_at))}` : "长期有效"}</small></div><div><span class="gateway-token-label">最近使用</span><strong>${escapeHtml(gatewayDate(token.last_used_at))}</strong><small>创建：${escapeHtml(gatewayDate(token.created_at))}</small></div><span class="status ${stateInfo.className}">${stateInfo.label}</span><button type="button" class="danger" data-gateway-revoke-token="${escapeHtml(token.token_id)}" ${token.enabled ? "" : "disabled"}>撤销</button></div>`;
     }).join("") : '<div class="gateway-caller-empty">还没有 Key。右侧表单可为该调用方签发。</div>';
-    return `<article class="gateway-caller-card"><div class="gateway-caller-head"><div><strong>${escapeHtml(caller.name)}</strong><small>${escapeHtml(caller.note || "无备注")}</small></div><div><span class="status ${caller.enabled ? "running" : "stopped"}">${caller.enabled ? "启用" : "已停用"}</span>${caller.enabled ? `<button type="button" class="gateway-text-danger" data-gateway-disable-consumer="${escapeHtml(caller.consumer_id)}">停用调用方</button>` : ""}</div></div><div class="gateway-token-list">${rows}</div></article>`;
+    return `<article class="gateway-caller-card"><div class="gateway-caller-head"><div><strong>${escapeHtml(caller.name)}</strong><small>${escapeHtml(caller.note || "无备注")}</small></div><div><span class="status ${caller.enabled ? "running" : "stopped"}">${caller.enabled ? "启用" : "已停用"}</span>${caller.enabled ? `<button type="button" class="gateway-text-danger" data-gateway-disable-consumer="${escapeHtml(caller.consumer_id)}">停用调用方</button>` : ""}<button type="button" class="gateway-text-danger" data-gateway-delete-consumer="${escapeHtml(caller.consumer_id)}">删除</button></div></div><div class="gateway-token-list">${rows}</div></article>`;
   }).join("");
 }
 
@@ -468,7 +470,7 @@ function renderGatewayFormOptions(force=false) {
   const signature = JSON.stringify({
     models: state.gatewayModels.map(model => [model.publication_id, model.display_name]),
     callers: state.gatewayCallers.map(caller => [caller.consumer_id, caller.name, caller.enabled]),
-    tokens: state.gatewayCallers.flatMap(caller => (caller.tokens || []).map(token => [token.token_id, token.name, token.key_hint, token.publication_ids])),
+    tokens: state.gatewayCallers.flatMap(caller => (caller.tokens || []).map(token => [token.token_id, token.name, token.key_hint, token.publication_ids, token.model_ids])),
   });
   if (!force && signature === state.gatewayFormSignature) return;
   state.gatewayFormSignature = signature;
@@ -555,7 +557,7 @@ async function loadGateway({silent=false}={}) {
 
 function showGatewaySecret(secret, token) {
   document.querySelector("#gateway-key-secret").value = secret;
-  document.querySelector("#gateway-key-meta").textContent = `${token.name} · ${token.publication_ids.map(gatewayModelName).join("、")} · ${token.token_limit == null ? "不限额" : `额度 ${gatewayNumber(token.token_limit)} tokens`}`;
+  document.querySelector("#gateway-key-meta").textContent = `${token.name} · ${(token.model_ids?.length ? token.model_ids : token.publication_ids).map(gatewayModelName).join("、")} · ${token.token_limit == null ? "不限额" : `额度 ${gatewayNumber(token.token_limit)} tokens`}`;
   document.querySelector("#gateway-key-dialog").showModal();
 }
 
@@ -627,6 +629,7 @@ document.querySelector("#gateway-token-form").addEventListener("submit", async e
 document.querySelector("#gateway-caller-list").addEventListener("click", async event => {
   const revokeToken = event.target.closest("[data-gateway-revoke-token]");
   const disableCaller = event.target.closest("[data-gateway-disable-consumer]");
+  const deleteCaller = event.target.closest("[data-gateway-delete-consumer]");
   try {
     if (revokeToken) {
       if (!window.confirm("撤销后该 Key 会立即失效，其他 Key 不受影响。确定继续吗？")) return;
@@ -637,6 +640,11 @@ document.querySelector("#gateway-caller-list").addEventListener("click", async e
       if (!window.confirm("停用调用方会同时停用它的全部 Key。确定继续吗？")) return;
       await gatewayRequest("gateway-config", `/api/v1/gateway/callers/${encodeURIComponent(disableCaller.dataset.gatewayDisableConsumer)}`, {method:"DELETE"});
       toast("API 调用方已停用");
+      await loadGateway();
+    } else if (deleteCaller) {
+      if (!window.confirm("删除后调用方及其全部 Key 会永久移除，历史用量记录仍会保留。确定继续吗？")) return;
+      await gatewayRequest("gateway-config", `/api/v1/gateway/callers/${encodeURIComponent(deleteCaller.dataset.gatewayDeleteConsumer)}/permanent`, {method:"DELETE"});
+      toast("API 调用方已删除");
       await loadGateway();
     }
   } catch (error) {

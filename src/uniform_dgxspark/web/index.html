@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="dark">
     <title>Uniform · DGX Spark</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="/static/app.css?v=20261103-gateway">
+    <link rel="stylesheet" href="/static/app.css?v=20261103-gateway-reuse">
     <link rel="stylesheet" href="/static/vendor/node_modules/@xterm/xterm/css/xterm.css">
   </head>
   <body>
@@ -153,7 +153,7 @@
             </section>
 
             <section class="gateway-panel" aria-labelledby="gateway-token-heading">
-              <div class="section-heading"><div><h2 id="gateway-token-heading">签发 API Key</h2><p>Key 只在创建时完整显示一次。可为同一个调用方签发多把 Key，并分别限制模型、额度和有效期。</p></div></div>
+              <div class="section-heading"><div><h2 id="gateway-token-heading">签发 API Key</h2><p>Key 只在创建时完整显示一次。可为同一个调用方签发多把 Key，并分别限制模型、额度和有效期。模型权限跟随模型身份，停止并重新部署同一模型后无需重新签发。</p></div></div>
               <form id="gateway-token-form" class="gateway-token-form">
                 <div class="form-grid">
                   <label>调用方<select id="gateway-token-caller" name="consumer_id" required><option value="">先新增调用方</option></select></label>
@@ -859,6 +859,6 @@
       </form>
     </dialog>
     <div id="toast" class="toast"></div>
-    <script type="module" src="/static/app.js?v=20261103-gateway"></script>
+    <script type="module" src="/static/app.js?v=20261103-gateway-reuse"></script>
   </body>
 </html>

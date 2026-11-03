@@ -844,6 +844,7 @@ class AIDeployedServiceList(BaseModel):
 class ServicePublicationRead(BaseModel):
     target_type: Literal["deployment", "ai_session"]
     target_id: str
+    model_id: str
     display_name: str
     publication_id: str | None
     enabled: bool
@@ -894,6 +895,7 @@ class GatewayTokenRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     publication_ids: list[str]
+    model_ids: list[str]
 
 
 class GatewayTokenSecret(GatewayTokenRead):

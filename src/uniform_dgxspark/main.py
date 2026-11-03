@@ -2702,6 +2702,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return ServicePublicationRead(
             target_type=value.target.target_type,
             target_id=value.target.target_id,
+            model_id=value.target.model_key,
             display_name=value.target.label,
             publication_id=publication.publication_id if publication else None,
             enabled=bool(publication and publication.enabled),
@@ -2738,6 +2739,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             created_at=token.created_at,
             updated_at=token.updated_at,
             publication_ids=list(token.publication_ids),
+            model_ids=list(token.model_ids),
         )
 
     def gateway_consumer_read(
@@ -2797,6 +2799,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def disable_gateway_caller(consumer_id: str) -> Response:
         store: GatewayStore = application.state.gateway_store
         if not store.disable_consumer(consumer_id):
+            raise HTTPException(status_code=404, detail="API caller not found")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @application.delete(
+        "/api/v1/gateway/callers/{consumer_id}/permanent",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def delete_gateway_caller(consumer_id: str) -> Response:
+        store: GatewayStore = application.state.gateway_store
+        if not store.delete_consumer(consumer_id):
             raise HTTPException(status_code=404, detail="API caller not found")
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 

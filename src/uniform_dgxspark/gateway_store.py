@@ -49,6 +49,7 @@ class GatewayToken:
     created_at: datetime
     updated_at: datetime
     publication_ids: tuple[str, ...]
+    model_ids: tuple[str, ...]
 
     def expires_in_past(self, now: datetime | None = None) -> bool:
         return self.expires_at is not None and self.expires_at <= (now or utc_now())
@@ -113,12 +114,44 @@ class GatewayStore:
             scope_rows = connection.execute(
                 "SELECT token_id, publication_id FROM gateway_token_publications"
             ).fetchall()
-        scopes: dict[str, list[str]] = {}
+            model_scope_rows = connection.execute(
+                "SELECT token_id, model_id FROM gateway_token_models"
+            ).fetchall()
+            active_publication_rows = connection.execute(
+                """
+                SELECT publication_id, model_key FROM service_publications
+                WHERE enabled = 1
+                """
+            ).fetchall()
+        legacy_scopes: dict[str, list[str]] = {}
         for row in scope_rows:
-            scopes.setdefault(str(row["token_id"]), []).append(str(row["publication_id"]))
+            legacy_scopes.setdefault(str(row["token_id"]), []).append(
+                str(row["publication_id"])
+            )
+        model_scopes: dict[str, list[str]] = {}
+        for row in model_scope_rows:
+            model_scopes.setdefault(str(row["token_id"]), []).append(str(row["model_id"]))
+        active_publications: dict[str, list[str]] = {}
+        for row in active_publication_rows:
+            active_publications.setdefault(str(row["model_key"]), []).append(
+                str(row["publication_id"])
+            )
         tokens_by_consumer: dict[str, list[GatewayToken]] = {}
         for row in token_rows:
-            token = self._token_from_row(row, scopes.get(str(row["token_id"]), []))
+            token_id = str(row["token_id"])
+            model_ids = model_scopes.get(token_id, [])
+            publication_ids = (
+                sorted(
+                    {
+                        publication_id
+                        for model_id in model_ids
+                        for publication_id in active_publications.get(model_id, [])
+                    }
+                )
+                if model_ids
+                else legacy_scopes.get(token_id, [])
+            )
+            token = self._token_from_row(row, publication_ids, model_ids)
             tokens_by_consumer.setdefault(token.consumer_id, []).append(token)
         return [
             (self._consumer_from_row(row), tokens_by_consumer.get(str(row["consumer_id"]), []))
@@ -144,6 +177,15 @@ class GatewayStore:
             connection.commit()
         return cursor.rowcount > 0
 
+    def delete_consumer(self, consumer_id: str) -> bool:
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                "DELETE FROM gateway_consumers WHERE consumer_id = ?", (consumer_id,)
+            )
+            connection.commit()
+        return cursor.rowcount > 0
+
     def create_token(
         self,
         consumer_id: str,
@@ -161,19 +203,27 @@ class GatewayStore:
             raise GatewayPublicationScopeInvalid("select at least one published model")
         placeholders = ",".join("?" for _ in selected)
         with self.database.connect() as connection:
-            available = {
-                str(row["publication_id"])
-                for row in connection.execute(
-                    f"""
-                    SELECT publication_id FROM service_publications
+            available_rows = connection.execute(
+                f"""
+                    SELECT publication_id, model_key FROM service_publications
                     WHERE enabled = 1 AND publication_id IN ({placeholders})
                     """,
-                    tuple(selected),
-                ).fetchall()
+                tuple(selected),
+            ).fetchall()
+            available = {
+                str(row["publication_id"]): str(row["model_key"])
+                for row in available_rows
             }
-            if available != set(selected):
+            if set(available) != set(selected):
                 raise GatewayPublicationScopeInvalid(
                     "one or more selected models are not published"
+                )
+            model_ids = sorted(
+                {model_id for model_id in available.values() if model_id}
+            )
+            if not model_ids:
+                raise GatewayPublicationScopeInvalid(
+                    "selected models do not have a reusable model identity"
                 )
             api_key = f"{self.KEY_PREFIX}{token_urlsafe(32)}"
             token_id = uuid4().hex
@@ -205,6 +255,13 @@ class GatewayStore:
                 """,
                 [(token_id, publication_id, now) for publication_id in selected],
             )
+            connection.executemany(
+                """
+                INSERT INTO gateway_token_models(token_id, model_id, created_at)
+                VALUES (?, ?, ?)
+                """,
+                [(token_id, model_id, now) for model_id in model_ids],
+            )
             connection.commit()
         return self.get_token(token_id), api_key
 
@@ -221,10 +278,12 @@ class GatewayStore:
                 """,
                 (token_id,),
             ).fetchone()
-            publication_ids = self._scope_ids(connection, token_id) if row else []
+            publication_ids, model_ids = (
+                self._scopes(connection, token_id) if row else ([], [])
+            )
         if row is None:
             raise GatewayTokenNotFound(token_id)
-        return self._token_from_row(row, publication_ids)
+        return self._token_from_row(row, publication_ids, model_ids)
 
     def find_token_by_key(self, api_key: str) -> GatewayToken | None:
         if not api_key or len(api_key) > 512:
@@ -241,19 +300,43 @@ class GatewayStore:
                 """,
                 (self.hash_api_key(api_key),),
             ).fetchone()
-            publication_ids = self._scope_ids(connection, str(row["token_id"])) if row else []
-        return self._token_from_row(row, publication_ids) if row is not None else None
+            publication_ids, model_ids = (
+                self._scopes(connection, str(row["token_id"])) if row else ([], [])
+            )
+        return (
+            self._token_from_row(row, publication_ids, model_ids)
+            if row is not None
+            else None
+        )
 
-    def can_access_publication(self, token_id: str, publication_id: str) -> bool:
+    def can_access_publication(
+        self,
+        token_id: str,
+        publication_id: str,
+        model_id: str = "",
+    ) -> bool:
         with self.database.connect() as connection:
-            row = connection.execute(
+            model_scope = connection.execute(
+                "SELECT 1 FROM gateway_token_models WHERE token_id = ? LIMIT 1",
+                (token_id,),
+            ).fetchone()
+            if model_scope is not None:
+                allowed = connection.execute(
+                    """
+                    SELECT 1 FROM gateway_token_models
+                    WHERE token_id = ? AND model_id = ?
+                    """,
+                    (token_id, model_id.strip()),
+                ).fetchone()
+                return allowed is not None
+            legacy_scope = connection.execute(
                 """
                 SELECT 1 FROM gateway_token_publications
                 WHERE token_id = ? AND publication_id = ?
                 """,
                 (token_id, publication_id),
             ).fetchone()
-        return row is not None
+        return legacy_scope is not None
 
     def disable_token(self, token_id: str) -> bool:
         now = to_iso(utc_now())
@@ -419,6 +502,36 @@ class GatewayStore:
             ).fetchall()
         ]
 
+    @classmethod
+    def _scopes(
+        cls, connection: sqlite3.Connection, token_id: str
+    ) -> tuple[list[str], list[str]]:
+        model_ids = [
+            str(row["model_id"])
+            for row in connection.execute(
+                """
+                SELECT model_id FROM gateway_token_models
+                WHERE token_id = ? ORDER BY model_id
+                """,
+                (token_id,),
+            ).fetchall()
+        ]
+        if not model_ids:
+            return cls._scope_ids(connection, token_id), []
+        placeholders = ",".join("?" for _ in model_ids)
+        publication_ids = [
+            str(row["publication_id"])
+            for row in connection.execute(
+                f"""
+                SELECT publication_id FROM service_publications
+                WHERE enabled = 1 AND model_key IN ({placeholders})
+                ORDER BY publication_id
+                """,
+                tuple(model_ids),
+            ).fetchall()
+        ]
+        return publication_ids, model_ids
+
     @staticmethod
     def _consumer_from_row(row: sqlite3.Row) -> GatewayConsumer:
         return GatewayConsumer(
@@ -431,7 +544,11 @@ class GatewayStore:
         )
 
     @staticmethod
-    def _token_from_row(row: sqlite3.Row, publication_ids: list[str]) -> GatewayToken:
+    def _token_from_row(
+        row: sqlite3.Row,
+        publication_ids: list[str],
+        model_ids: list[str],
+    ) -> GatewayToken:
         return GatewayToken(
             token_id=str(row["token_id"]),
             consumer_id=str(row["consumer_id"]),
@@ -455,4 +572,5 @@ class GatewayStore:
             created_at=datetime.fromisoformat(str(row["created_at"]).replace("Z", "+00:00")),
             updated_at=datetime.fromisoformat(str(row["updated_at"]).replace("Z", "+00:00")),
             publication_ids=tuple(publication_ids),
+            model_ids=tuple(model_ids),
         )

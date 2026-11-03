@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 27
+SCHEMA_VERSION = 28
 
 
 class Database:
@@ -280,6 +280,7 @@ class Database:
                     target_type TEXT NOT NULL
                         CHECK(target_type IN ('deployment', 'ai_session')),
                     target_id TEXT NOT NULL,
+                    model_key TEXT NOT NULL DEFAULT '',
                     api_key_hash TEXT NOT NULL,
                     key_hint TEXT NOT NULL,
                     enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
@@ -337,6 +338,17 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_gateway_token_publications_publication
                     ON gateway_token_publications(publication_id, token_id);
+
+                CREATE TABLE IF NOT EXISTS gateway_token_models (
+                    token_id TEXT NOT NULL,
+                    model_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(token_id, model_id),
+                    FOREIGN KEY(token_id) REFERENCES gateway_tokens(token_id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_gateway_token_models_model
+                    ON gateway_token_models(model_id, token_id);
 
                 CREATE TABLE IF NOT EXISTS gateway_usage_logs (
                     id TEXT PRIMARY KEY,
@@ -568,6 +580,48 @@ class Database:
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_ai_sessions_created ON ai_sessions(created_at DESC)"
+            )
+            publication_columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(service_publications)"
+                ).fetchall()
+            }
+            if "model_key" not in publication_columns:
+                connection.execute(
+                    "ALTER TABLE service_publications ADD COLUMN "
+                    "model_key TEXT NOT NULL DEFAULT ''"
+                )
+            connection.execute(
+                """
+                UPDATE service_publications AS publication
+                SET model_key = COALESCE(
+                    (
+                        SELECT deployment.model_id FROM deployments AS deployment
+                        WHERE publication.target_type = 'deployment'
+                          AND deployment.id = publication.target_id
+                    ),
+                    (
+                        SELECT session.target_model_id FROM ai_sessions AS session
+                        WHERE publication.target_type = 'ai_session'
+                          AND session.id = publication.target_id
+                          AND session.target_model_id IS NOT NULL
+                          AND trim(session.target_model_id) != ''
+                    ),
+                    publication.target_type || ':' || publication.target_id
+                )
+                WHERE publication.model_key = ''
+                """
+            )
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO gateway_token_models(token_id, model_id, created_at)
+                SELECT scope.token_id, publication.model_key, scope.created_at
+                FROM gateway_token_publications AS scope
+                JOIN service_publications AS publication
+                  ON publication.publication_id = scope.publication_id
+                WHERE publication.model_key != ''
+                """
             )
             ui_edit_columns = {
                 row["name"]

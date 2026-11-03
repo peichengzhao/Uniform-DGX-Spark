@@ -14,6 +14,7 @@ class ServicePublication:
     publication_id: str
     target_type: str
     target_id: str
+    model_key: str
     api_key_hash: str
     key_hint: str
     enabled: bool
@@ -54,10 +55,14 @@ class ServicePublicationStore:
         *,
         api_key_hash: str,
         key_hint: str,
+        model_key: str | None = None,
     ) -> ServicePublication:
         now = to_iso(utc_now())
         with self.database.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            normalized_model_key = self._resolve_model_key(
+                connection, target_type, target_id, model_key
+            )
             existing = connection.execute(
                 """
                 SELECT publication_id, created_at FROM service_publications
@@ -72,10 +77,11 @@ class ServicePublicationStore:
             connection.execute(
                 """
                 INSERT INTO service_publications(
-                    publication_id, target_type, target_id, api_key_hash, key_hint,
+                    publication_id, target_type, target_id, model_key, api_key_hash, key_hint,
                     enabled, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
                 ON CONFLICT(target_type, target_id) DO UPDATE SET
+                    model_key = excluded.model_key,
                     api_key_hash = excluded.api_key_hash,
                     key_hint = excluded.key_hint,
                     enabled = 1,
@@ -85,6 +91,7 @@ class ServicePublicationStore:
                     publication_id,
                     target_type,
                     target_id,
+                    normalized_model_key,
                     api_key_hash,
                     key_hint,
                     created_at,
@@ -96,6 +103,31 @@ class ServicePublicationStore:
         if publication is None:  # pragma: no cover - protected by the transaction above
             raise sqlite3.DatabaseError("service publication was not persisted")
         return publication
+
+    @staticmethod
+    def _resolve_model_key(
+        connection: sqlite3.Connection,
+        target_type: str,
+        target_id: str,
+        model_key: str | None,
+    ) -> str:
+        if model_key and model_key.strip():
+            return model_key.strip()
+        if target_type == "deployment":
+            row = connection.execute(
+                "SELECT model_id FROM deployments WHERE id = ?", (target_id,)
+            ).fetchone()
+            if row is not None:
+                return str(row["model_id"]).strip()
+        elif target_type == "ai_session":
+            row = connection.execute(
+                "SELECT target_model_id FROM ai_sessions WHERE id = ?", (target_id,)
+            ).fetchone()
+            if row is not None and row["target_model_id"]:
+                target_model_id = str(row["target_model_id"]).strip()
+                if target_model_id:
+                    return target_model_id
+        return f"{target_type}:{target_id}"
 
     def disable(self, target_type: str, target_id: str) -> bool:
         now = to_iso(utc_now())
@@ -160,6 +192,7 @@ class ServicePublicationStore:
             publication_id=str(row["publication_id"]),
             target_type=str(row["target_type"]),
             target_id=str(row["target_id"]),
+            model_key=str(row["model_key"]),
             api_key_hash=str(row["api_key_hash"]),
             key_hint=str(row["key_hint"]),
             enabled=bool(row["enabled"]),
