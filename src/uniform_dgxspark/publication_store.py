@@ -111,6 +111,20 @@ class ServicePublicationStore:
             connection.commit()
         return cursor.rowcount > 0
 
+    def disable_legacy_key(self, publication_id: str) -> bool:
+        now = to_iso(utc_now())
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE service_publications
+                SET api_key_hash = '', key_hint = '', updated_at = ?
+                WHERE publication_id = ? AND enabled = 1 AND api_key_hash != ''
+                """,
+                (now, publication_id),
+            )
+            connection.commit()
+        return cursor.rowcount > 0
+
     def count_enabled(self) -> int:
         with self.database.connect() as connection:
             return int(
@@ -128,6 +142,17 @@ class ServicePublicationStore:
                 """
             ).fetchall()
         return {str(row["publication_id"]) for row in rows}
+
+    def list_enabled(self) -> list[ServicePublication]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM service_publications
+                WHERE enabled = 1
+                ORDER BY created_at DESC, publication_id
+                """
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
 
     @staticmethod
     def _from_row(row: sqlite3.Row) -> ServicePublication:

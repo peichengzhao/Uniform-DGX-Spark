@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="dark">
     <title>Uniform · DGX Spark</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="/static/app.css?v=20261102-dsh-reasoning-group">
+    <link rel="stylesheet" href="/static/app.css?v=20261103-gateway">
     <link rel="stylesheet" href="/static/vendor/node_modules/@xterm/xterm/css/xterm.css">
   </head>
   <body>
@@ -24,6 +24,7 @@
         <nav>
           <button class="nav-item active" data-ui-id="navigation.deployments" data-view="deployments">部署中心</button>
           <button class="nav-item" data-ui-id="navigation.catalog" data-view="catalog">模型中心</button>
+          <button class="nav-item" data-ui-id="navigation.gateway" data-view="gateway">网关配置</button>
           <button class="nav-item" data-ui-id="navigation.ai-sessions" data-view="ai-sessions">AI 会话</button>
           <button class="nav-item" data-ui-id="navigation.system" data-view="system">系统监控</button>
           <button class="nav-item" data-ui-id="navigation.arena" data-view="arena">性能评测</button>
@@ -120,6 +121,78 @@
               <div id="empty-images" class="empty-state"><div class="empty-icon">⬡</div><h3>没有匹配的本地镜像</h3><p>部署时填写远程镜像，平台会自动拉取。</p></div>
             </details>
           </div>
+        </section>
+
+        <section id="view-gateway" class="view" data-ui-id="page.gateway">
+          <div class="workflow-hero gateway-hero">
+            <div><p class="eyebrow">MODEL ACCESS CONTROL</p><h2>网关配置</h2><p>统一管理已发布模型、API 调用方、独立 Key 与请求用量。每位使用者使用自己的 Key，不再共享同一个凭据。</p></div>
+            <span>OpenAI-compatible · 独立鉴权</span>
+          </div>
+          <div class="summary-grid gateway-summary-grid">
+            <article><span>网关模型</span><strong id="gateway-model-count">0</strong><small>当前已发布并进入网关的模型</small></article>
+            <article><span>API 调用方</span><strong id="gateway-caller-count">0</strong><small>个人、团队或业务应用</small></article>
+            <article><span>可用 API Key</span><strong id="gateway-key-count">0</strong><small>独立签发，可分别撤销</small></article>
+            <article><span>累计请求</span><strong id="gateway-request-count">0</strong><small id="gateway-token-summary">尚无用量记录</small></article>
+          </div>
+
+          <section class="gateway-panel" aria-labelledby="gateway-models-heading">
+            <div class="section-heading"><div><h2 id="gateway-models-heading">已发布模型</h2><p>这些模型已经过 18181 鉴权网关。客户端使用模型对应的 Base URL，并搭配调用方自己的 Key。</p></div><button id="refresh-gateway" type="button" class="secondary">刷新网关</button></div>
+            <div id="gateway-models" class="gateway-model-grid"></div>
+            <div id="gateway-models-empty" class="empty-state compact" hidden><div class="empty-icon">◇</div><h3>还没有模型进入网关</h3><p>先在部署中心为运行中的模型开启局域网访问，再回来分配独立 Key。</p></div>
+          </section>
+
+          <div class="gateway-config-grid">
+            <section class="gateway-panel" aria-labelledby="gateway-callers-heading">
+              <div class="section-heading"><div><h2 id="gateway-callers-heading">API 调用方</h2><p>调用方是 Key 的归属对象，可表示同事、团队或业务系统。</p></div></div>
+              <form id="gateway-caller-form" class="gateway-caller-form">
+                <div class="form-grid"><label>名称<input name="name" maxlength="120" required placeholder="例如：算法组 / 业务系统 A"></label><label>备注<input name="note" maxlength="1000" placeholder="可选，便于后续识别"></label></div>
+                <div id="gateway-caller-error" class="form-error" role="alert"></div>
+                <button type="submit" class="primary">新增调用方</button>
+              </form>
+              <div id="gateway-caller-list" class="gateway-caller-list"><div class="empty-state compact">正在读取调用方…</div></div>
+            </section>
+
+            <section class="gateway-panel" aria-labelledby="gateway-token-heading">
+              <div class="section-heading"><div><h2 id="gateway-token-heading">签发 API Key</h2><p>Key 只在创建时完整显示一次。可为同一个调用方签发多把 Key，并分别限制模型、额度和有效期。</p></div></div>
+              <form id="gateway-token-form" class="gateway-token-form">
+                <div class="form-grid">
+                  <label>调用方<select id="gateway-token-caller" name="consumer_id" required><option value="">先新增调用方</option></select></label>
+                  <label>Key 名称<input name="name" maxlength="120" required placeholder="例如：笔记本 / 线上服务"></label>
+                  <label>Token 额度 <small>留空表示不限额</small><input name="token_limit" type="number" min="1" step="1" placeholder="例如 1000000"></label>
+                  <label>有效期 <small>留空表示长期有效</small><input name="expires_at" type="datetime-local"></label>
+                </div>
+                <fieldset class="gateway-model-scope"><legend>允许访问的模型</legend><div id="gateway-token-models" class="gateway-model-checks"><small>先从部署中心发布模型。</small></div></fieldset>
+                <div id="gateway-token-error" class="form-error" role="alert"></div>
+                <button type="submit" class="primary">生成独立 Key</button>
+              </form>
+            </section>
+          </div>
+
+          <section class="gateway-panel" aria-labelledby="gateway-usage-heading">
+            <div class="section-heading"><div><h2 id="gateway-usage-heading">用量中心</h2><p>按模型、调用方和 Key 筛选请求记录。Token 数来自模型服务的真实 usage；未返回 usage 的请求会明确标记。</p></div><button id="refresh-gateway-usage" type="button" class="secondary">刷新用量</button></div>
+            <div class="gateway-usage-filters">
+              <label>模型<select id="gateway-usage-model"><option value="">全部模型</option></select></label>
+              <label>调用方<select id="gateway-usage-caller"><option value="">全部调用方</option></select></label>
+              <label>API Key<select id="gateway-usage-token"><option value="">全部 Key</option></select></label>
+              <button id="clear-gateway-usage-filters" type="button" class="secondary">清除筛选</button>
+            </div>
+            <p id="gateway-usage-meta" class="gateway-usage-meta" role="status" aria-live="polite"></p>
+            <div class="gateway-usage-table-wrap">
+              <div class="gateway-usage-header"><span>时间</span><span>模型</span><span>调用方</span><span>Key</span><span>接口</span><span>状态</span><span>Token</span><span>耗时</span></div>
+              <div id="gateway-usage-list" class="gateway-usage-list"></div>
+            </div>
+            <div id="gateway-usage-empty" class="empty-state compact" hidden><div class="empty-icon">⌁</div><h3>没有匹配的调用记录</h3><p>使用独立 Key 发起模型请求后，用量会显示在这里。</p></div>
+          </section>
+
+          <dialog id="gateway-key-dialog" class="gateway-key-dialog">
+            <section>
+              <div class="dialog-head"><div><p class="eyebrow">ONE-TIME API KEY</p><h2>请立即保存独立 API Key</h2></div><button type="button" class="icon-button" data-gateway-key-close aria-label="关闭">×</button></div>
+              <p>关闭后无法再次查看完整 Key。遗失时请为此调用方重新签发，并撤销旧 Key。</p>
+              <div class="publication-copy-row"><input id="gateway-key-secret" readonly autocomplete="off" spellcheck="false"><button type="button" class="secondary" data-copy-publication="gateway-key-secret" data-copy-label="API Key">复制</button></div>
+              <div class="gateway-key-meta" id="gateway-key-meta"></div>
+              <div class="dialog-actions"><button type="button" class="primary" data-gateway-key-close>我已保存</button></div>
+            </section>
+          </dialog>
         </section>
 
         <section id="view-system" class="view" data-ui-id="page.system">
@@ -786,6 +859,6 @@
       </form>
     </dialog>
     <div id="toast" class="toast"></div>
-    <script type="module" src="/static/app.js?v=20261102-dsh-reasoning-group"></script>
+    <script type="module" src="/static/app.js?v=20261103-gateway"></script>
   </body>
 </html>

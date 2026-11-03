@@ -16,7 +16,7 @@ import threading
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, status
@@ -41,6 +41,14 @@ from .config import Settings
 from .database import Database
 from .dataset_integration_api import register_dataset_integration_routes
 from .feishu_api import register_feishu_routes
+from .gateway_store import (
+    GatewayConsumer,
+    GatewayConsumerNotFound,
+    GatewayPublicationScopeInvalid,
+    GatewayStore,
+    GatewayToken,
+    GatewayTokenNotFound,
+)
 from .node_store import SSHNodeAlreadyExists, SSHNodeStore
 from .publication_store import ServicePublicationStore
 from .schemas import (
@@ -90,6 +98,15 @@ from .schemas import (
     DeploymentList,
     DeploymentParameters,
     DeploymentRead,
+    GatewayConsumerCreate,
+    GatewayConsumerList,
+    GatewayConsumerRead,
+    GatewayTokenCreate,
+    GatewayTokenRead,
+    GatewayTokenSecret,
+    GatewayUsagePage,
+    GatewayUsageRead,
+    GatewayUsageSummary,
     HealthRead,
     LocalImageList,
     LocalModelInventory,
@@ -445,6 +462,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         arena_store = ArenaRunStore(database, resolved_settings.arena_runs_dir)
         accuracy_store = AccuracyRunStore(database)
         publication_store = ServicePublicationStore(database)
+        gateway_store = GatewayStore(database)
         ssh_node_store = SSHNodeStore(database)
         ai_store.recover_incomplete()
         benchmark_store.recover_incomplete()
@@ -467,6 +485,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             store,
             ai_store,
             runtime,
+            gateway_store,
             listen_host=resolved_settings.publication_host,
             listen_port=resolved_settings.publication_port,
             advertise_host=resolved_settings.publication_advertise_host,
@@ -654,6 +673,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.runtime = runtime
         application.state.publication_store = publication_store
         application.state.publication_manager = publication_manager
+        application.state.gateway_store = gateway_store
         application.state.external_access_manager = external_access_manager
         application.state.worker = worker
         application.state.metrics = metrics
@@ -734,19 +754,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         publication_mutation = request.url.path.startswith(
             "/api/v1/service-publications/"
         ) and request.method in {"POST", "PUT", "PATCH", "DELETE"}
-        if publication_mutation:
+        gateway_mutation = request.url.path.startswith(
+            "/api/v1/gateway/"
+        ) and request.method in {"POST", "PUT", "PATCH", "DELETE"}
+        if publication_mutation or gateway_mutation:
             request_host = (request.url.hostname or "").casefold().rstrip(".")
             if request_host not in publication_control_hosts:
                 return JSONResponse(
                     status_code=421,
                     content={"detail": "untrusted control-plane host"},
                 )
+            action = "service-publication" if publication_mutation else "gateway-config"
             if not hmac.compare_digest(
-                request.headers.get("X-Uniform-Action", ""), "service-publication"
+                request.headers.get("X-Uniform-Action", ""), action
             ):
                 return JSONResponse(
                     status_code=403,
-                    content={"detail": "service publication action header is required"},
+                    content={"detail": "control-plane action header is required"},
                 )
         capability_action = request.url.path.startswith("/api/v1/ai/sessions/") and (
             "/actions/" in request.url.path
@@ -2692,6 +2716,154 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             external_access_error=external_access.error,
             created_at=publication.created_at if publication else None,
             updated_at=publication.updated_at if publication else None,
+        )
+
+    def gateway_token_read(token: GatewayToken) -> GatewayTokenRead:
+        remaining = (
+            max(token.token_limit - token.used_tokens, 0)
+            if token.token_limit is not None
+            else None
+        )
+        return GatewayTokenRead(
+            token_id=token.token_id,
+            consumer_id=token.consumer_id,
+            name=token.name,
+            key_hint=token.key_hint,
+            enabled=token.enabled and token.consumer_enabled,
+            token_limit=token.token_limit,
+            used_tokens=token.used_tokens,
+            remaining_tokens=remaining,
+            expires_at=token.expires_at,
+            last_used_at=token.last_used_at,
+            created_at=token.created_at,
+            updated_at=token.updated_at,
+            publication_ids=list(token.publication_ids),
+        )
+
+    def gateway_consumer_read(
+        consumer: GatewayConsumer, tokens: list[GatewayToken]
+    ) -> GatewayConsumerRead:
+        return GatewayConsumerRead(
+            consumer_id=consumer.consumer_id,
+            name=consumer.name,
+            note=consumer.note,
+            enabled=consumer.enabled,
+            created_at=consumer.created_at,
+            updated_at=consumer.updated_at,
+            tokens=[gateway_token_read(token) for token in tokens],
+        )
+
+    @application.get(
+        "/api/v1/gateway/models",
+        response_model=list[ServicePublicationRead],
+    )
+    def gateway_models() -> list[ServicePublicationRead]:
+        manager: ServicePublicationManager = application.state.publication_manager
+        return [publication_read_model(status) for status in manager.list_statuses()]
+
+    @application.delete(
+        "/api/v1/gateway/models/{publication_id}/legacy-key",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def disable_gateway_legacy_key(publication_id: str) -> Response:
+        store: ServicePublicationStore = application.state.publication_store
+        if not store.disable_legacy_key(publication_id):
+            raise HTTPException(status_code=404, detail="shared publication key not found")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @application.get("/api/v1/gateway/callers", response_model=GatewayConsumerList)
+    def gateway_callers() -> GatewayConsumerList:
+        store: GatewayStore = application.state.gateway_store
+        items = [
+            gateway_consumer_read(consumer, tokens)
+            for consumer, tokens in store.list_consumers()
+        ]
+        return GatewayConsumerList(items=items, total=len(items))
+
+    @application.post(
+        "/api/v1/gateway/callers",
+        response_model=GatewayConsumerRead,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_gateway_caller(request: GatewayConsumerCreate) -> GatewayConsumerRead:
+        store: GatewayStore = application.state.gateway_store
+        consumer = store.create_consumer(request.name, request.note)
+        return gateway_consumer_read(consumer, [])
+
+    @application.delete(
+        "/api/v1/gateway/callers/{consumer_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def disable_gateway_caller(consumer_id: str) -> Response:
+        store: GatewayStore = application.state.gateway_store
+        if not store.disable_consumer(consumer_id):
+            raise HTTPException(status_code=404, detail="API caller not found")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @application.post(
+        "/api/v1/gateway/callers/{consumer_id}/tokens",
+        response_model=GatewayTokenSecret,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_gateway_token(
+        consumer_id: str,
+        request: GatewayTokenCreate,
+        response: Response,
+    ) -> GatewayTokenSecret:
+        store: GatewayStore = application.state.gateway_store
+        expires_at = request.expires_at
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if expires_at is not None and expires_at <= datetime.now(UTC):
+            raise HTTPException(status_code=422, detail="expires_at must be in the future")
+        try:
+            token, api_key = store.create_token(
+                consumer_id,
+                request.name,
+                request.publication_ids,
+                token_limit=request.token_limit,
+                expires_at=expires_at,
+            )
+        except GatewayConsumerNotFound as error:
+            raise HTTPException(status_code=404, detail="API caller not found") from error
+        except GatewayPublicationScopeInvalid as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        response.headers["Cache-Control"] = "no-store"
+        return GatewayTokenSecret(**gateway_token_read(token).model_dump(), api_key=api_key)
+
+    @application.delete(
+        "/api/v1/gateway/tokens/{token_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def disable_gateway_token(token_id: str) -> Response:
+        store: GatewayStore = application.state.gateway_store
+        if not store.disable_token(token_id):
+            try:
+                store.get_token(token_id)
+            except GatewayTokenNotFound as error:
+                raise HTTPException(status_code=404, detail="API key not found") from error
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @application.get("/api/v1/gateway/usage", response_model=GatewayUsagePage)
+    def gateway_usage(
+        publication_id: str | None = Query(default=None, max_length=64),
+        consumer_id: str | None = Query(default=None, max_length=64),
+        token_id: str | None = Query(default=None, max_length=64),
+        limit: int = Query(default=100, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+    ) -> GatewayUsagePage:
+        store: GatewayStore = application.state.gateway_store
+        items, total, summary = store.usage_page(
+            publication_id=publication_id,
+            consumer_id=consumer_id,
+            token_id=token_id,
+            limit=limit,
+            offset=offset,
+        )
+        return GatewayUsagePage(
+            items=[GatewayUsageRead(**item) for item in items],
+            total=total,
+            summary=GatewayUsageSummary(**summary),
         )
 
     @application.get(

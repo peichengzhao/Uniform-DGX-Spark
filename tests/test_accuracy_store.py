@@ -172,7 +172,7 @@ def test_new_database_has_stage_37_tables_and_indexes(tmp_path: Path) -> None:
             ).fetchall()
         ]
 
-    assert SCHEMA_VERSION == 26
+    assert SCHEMA_VERSION >= 26
     assert {"accuracy_runs", "accuracy_run_metrics"} <= tables
     assert {
         "idx_accuracy_runs_created",
@@ -181,7 +181,7 @@ def test_new_database_has_stage_37_tables_and_indexes(tmp_path: Path) -> None:
         "idx_accuracy_metrics_run_dataset",
         "idx_accuracy_metrics_primary",
     } <= indexes
-    assert versions[-1] == 26
+    assert versions[-1] == SCHEMA_VERSION
 
 
 def test_stage_35_database_upgrades_without_losing_existing_deployment(tmp_path: Path) -> None:
@@ -256,7 +256,7 @@ def test_stage_35_database_upgrades_without_losing_existing_deployment(tmp_path:
 
     assert deployment.model_id == "org/existing-model"
     assert deployment.status == "stopped"
-    assert versions == [20, 26]
+    assert versions == [20, SCHEMA_VERSION]
     assert accuracy_tables == 2
 
 

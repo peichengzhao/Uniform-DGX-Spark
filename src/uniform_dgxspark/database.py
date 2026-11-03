@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 26
+SCHEMA_VERSION = 27
 
 
 class Database:
@@ -290,6 +290,83 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_service_publications_enabled
                     ON service_publications(enabled);
+
+                CREATE TABLE IF NOT EXISTS gateway_consumers (
+                    consumer_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    note TEXT,
+                    enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_gateway_consumers_created
+                    ON gateway_consumers(created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS gateway_tokens (
+                    token_id TEXT PRIMARY KEY,
+                    consumer_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    key_hash TEXT NOT NULL UNIQUE,
+                    key_hint TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+                    token_limit INTEGER CHECK(token_limit IS NULL OR token_limit > 0),
+                    used_tokens INTEGER NOT NULL DEFAULT 0 CHECK(used_tokens >= 0),
+                    expires_at TEXT,
+                    last_used_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(consumer_id) REFERENCES gateway_consumers(consumer_id)
+                        ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_gateway_tokens_consumer
+                    ON gateway_tokens(consumer_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_gateway_tokens_key_hash
+                    ON gateway_tokens(key_hash);
+
+                CREATE TABLE IF NOT EXISTS gateway_token_publications (
+                    token_id TEXT NOT NULL,
+                    publication_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(token_id, publication_id),
+                    FOREIGN KEY(token_id) REFERENCES gateway_tokens(token_id) ON DELETE CASCADE,
+                    FOREIGN KEY(publication_id) REFERENCES service_publications(publication_id)
+                        ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_gateway_token_publications_publication
+                    ON gateway_token_publications(publication_id, token_id);
+
+                CREATE TABLE IF NOT EXISTS gateway_usage_logs (
+                    id TEXT PRIMARY KEY,
+                    token_id TEXT,
+                    consumer_id TEXT,
+                    publication_id TEXT,
+                    publication_label TEXT,
+                    target_type TEXT,
+                    target_id TEXT,
+                    model TEXT,
+                    endpoint TEXT NOT NULL,
+                    method TEXT NOT NULL,
+                    status_code INTEGER NOT NULL,
+                    prompt_tokens INTEGER,
+                    completion_tokens INTEGER,
+                    total_tokens INTEGER,
+                    usage_source TEXT NOT NULL,
+                    latency_ms INTEGER NOT NULL,
+                    request_id TEXT,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_gateway_usage_created
+                    ON gateway_usage_logs(created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_gateway_usage_publication
+                    ON gateway_usage_logs(publication_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_gateway_usage_consumer
+                    ON gateway_usage_logs(consumer_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_gateway_usage_token
+                    ON gateway_usage_logs(token_id, created_at DESC);
 
                 CREATE TABLE IF NOT EXISTS ssh_nodes (
                     id TEXT PRIMARY KEY,

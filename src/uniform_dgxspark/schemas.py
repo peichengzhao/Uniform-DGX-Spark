@@ -864,6 +864,94 @@ class ServicePublicationSecret(ServicePublicationRead):
     api_key: str
 
 
+class GatewayConsumerCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class GatewayTokenCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    publication_ids: list[str] = Field(min_length=1, max_length=100)
+    token_limit: int | None = Field(default=None, ge=1, le=10**15)
+    expires_at: datetime | None = None
+
+
+class GatewayTokenRead(BaseModel):
+    token_id: str
+    consumer_id: str
+    name: str
+    key_hint: str
+    enabled: bool
+    token_limit: int | None
+    used_tokens: int
+    remaining_tokens: int | None
+    expires_at: datetime | None
+    last_used_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+    publication_ids: list[str]
+
+
+class GatewayTokenSecret(GatewayTokenRead):
+    api_key: str
+
+
+class GatewayConsumerRead(BaseModel):
+    consumer_id: str
+    name: str
+    note: str | None
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+    tokens: list[GatewayTokenRead] = Field(default_factory=list)
+
+
+class GatewayConsumerList(BaseModel):
+    items: list[GatewayConsumerRead]
+    total: int
+
+
+class GatewayUsageRead(BaseModel):
+    id: str
+    token_id: str | None
+    consumer_id: str | None
+    consumer_name: str
+    token_name: str
+    publication_id: str | None
+    publication_label: str | None
+    target_type: str | None
+    target_id: str | None
+    model: str | None
+    endpoint: str
+    method: str
+    status_code: int
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    total_tokens: int | None
+    usage_source: str
+    latency_ms: int
+    request_id: str | None
+    created_at: datetime
+
+
+class GatewayUsageSummary(BaseModel):
+    requests: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    unknown_usage: int
+
+
+class GatewayUsagePage(BaseModel):
+    items: list[GatewayUsageRead]
+    total: int
+    summary: GatewayUsageSummary
+
+
 class BenchmarkCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

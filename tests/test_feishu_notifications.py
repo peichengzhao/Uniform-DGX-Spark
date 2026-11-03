@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from uniform_dgxspark.config import Settings
-from uniform_dgxspark.database import Database
+from uniform_dgxspark.database import SCHEMA_VERSION, Database
 from uniform_dgxspark.feishu_api import FeishuCallbackLogFilter
 from uniform_dgxspark.feishu_models import (
     CALLBACK_PATH,
@@ -618,7 +618,10 @@ def test_schema_24_upgrade_preserves_integrations_and_accuracy_tables(tmp_path: 
         c.commit()
     db.initialize()
     with db.connect() as c:
-        assert [r[0] for r in c.execute("SELECT version FROM schema_migrations")] == [24, 25]
+        assert [r[0] for r in c.execute("SELECT version FROM schema_migrations")] == [
+            24,
+            SCHEMA_VERSION,
+        ]
         assert c.execute("SELECT COUNT(*) FROM accuracy_dataset_integrations").fetchone()[0] == 1
         assert c.execute("SELECT COUNT(*) FROM accuracy_runs").fetchone()[0] == 0
 

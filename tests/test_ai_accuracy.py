@@ -17,7 +17,7 @@ from test_accuracy_identity import make_cached_runner
 
 from uniform_dgxspark.accuracy_mcp import AccuracyMCP, tool_definitions
 from uniform_dgxspark.ai_store import AISessionStore
-from uniform_dgxspark.database import Database
+from uniform_dgxspark.database import SCHEMA_VERSION, Database
 from uniform_dgxspark.main import create_app
 from uniform_dgxspark.schemas import AISessionCreate
 from uniform_dgxspark.services.ai_terminal import AITerminalManager
@@ -421,7 +421,7 @@ def test_schema_22_migration_preserves_existing_sessions_and_adds_workflow_table
         assert [
             row[0]
             for row in connection.execute("SELECT version FROM schema_migrations ORDER BY version")
-        ] == [22, 25]
+        ] == [22, SCHEMA_VERSION]
 
 
 def test_mcp_protocol_tool_scope_error_redaction_and_stdio(tmp_path: Path) -> None:

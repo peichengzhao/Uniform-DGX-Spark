@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import hmac
 import ipaddress
+import json
 import logging
 import socket
 import threading
@@ -21,6 +22,7 @@ from starlette.datastructures import Headers
 from starlette.requests import ClientDisconnect
 
 from ..ai_store import AIDeploymentResultNotFound, AISessionNotFound, AISessionStore
+from ..gateway_store import GatewayStore, GatewayTokenNotFound
 from ..publication_store import ServicePublication, ServicePublicationStore
 from ..state import DeploymentStatus
 from ..store import DeploymentNotFound, DeploymentStore
@@ -72,6 +74,13 @@ class PublicationStatus:
     gateway_running: bool
 
 
+@dataclass(frozen=True, slots=True)
+class GatewayRequestIdentity:
+    token_id: str | None
+    consumer_id: str | None
+    legacy_key_hash: str | None = None
+
+
 class ServicePublicationManager:
     _ALLOWED_ENDPOINTS = {
         ("GET", "v1/models"),
@@ -81,6 +90,7 @@ class ServicePublicationManager:
         ("POST", "v1/responses"),
     }
     _MAX_REQUEST_BYTES = 16 * 1024 * 1024
+    _MAX_USAGE_CAPTURE_BYTES = 2 * 1024 * 1024
     _RESPONSE_HEADERS = {
         "cache-control",
         "content-encoding",
@@ -94,6 +104,7 @@ class ServicePublicationManager:
         deployment_store: DeploymentStore,
         ai_store: AISessionStore,
         runtime: DockerRuntime,
+        gateway_store: GatewayStore | None = None,
         *,
         listen_host: str = "0.0.0.0",
         listen_port: int = 18181,
@@ -104,6 +115,7 @@ class ServicePublicationManager:
         self.deployment_store = deployment_store
         self.ai_store = ai_store
         self.runtime = runtime
+        self.gateway_store = gateway_store
         self.listen_host = listen_host
         self.listen_port = listen_port
         self.advertise_host = advertise_host
@@ -114,6 +126,25 @@ class ServicePublicationManager:
         self._gateway_server: uvicorn.Server | None = None
         self._gateway_thread: threading.Thread | None = None
         self.gateway_error: str | None = None
+
+    def list_statuses(self) -> list[PublicationStatus]:
+        statuses: list[PublicationStatus] = []
+        for publication in self.store.list_enabled():
+            try:
+                target = self._resolve_target(
+                    publication.target_type, publication.target_id, require_running=False
+                )
+            except PublicationTargetNotFound:
+                continue
+            statuses.append(
+                PublicationStatus(
+                    target=target,
+                    publication=publication,
+                    base_url=self._base_url(publication.publication_id),
+                    gateway_running=self.gateway_running,
+                )
+            )
+        return statuses
 
     @property
     def gateway_running(self) -> bool:
@@ -393,10 +424,14 @@ class ServicePublicationManager:
         ) -> Response:
             publication = await asyncio.to_thread(self.store.get_enabled_by_id, publication_id)
             supplied_key = self._request_api_key(request)
-            if publication is None or not self.verify_key(publication, supplied_key):
+            identity, failure = await asyncio.to_thread(
+                self._authenticate_request, publication, supplied_key
+            )
+            if identity is None:
+                failure_status, failure_message = failure or (401, "invalid API key")
                 return JSONResponse(
-                    status_code=401,
-                    content={"error": {"message": "invalid API key"}},
+                    status_code=failure_status,
+                    content={"error": {"message": failure_message}},
                     headers={"WWW-Authenticate": "Bearer"},
                 )
             normalized_path = upstream_path.strip("/")
@@ -430,11 +465,15 @@ class ServicePublicationManager:
                     status_code=400,
                     content={"error": {"message": "request body was interrupted"}},
                 )
+            model = self._request_model(body)
+            started_at = time.monotonic()
             try:
-                if not await asyncio.to_thread(self._publication_is_current, publication):
+                if not await asyncio.to_thread(
+                    self._publication_is_current, publication, identity
+                ):
                     return JSONResponse(
                         status_code=401,
-                        content={"error": {"message": "API key was revoked"}},
+                        content={"error": {"message": "API key or model access was revoked"}},
                         headers={"WWW-Authenticate": "Bearer"},
                     )
                 target = await asyncio.to_thread(
@@ -452,11 +491,41 @@ class ServicePublicationManager:
                     request.headers,
                 )
             except (PublicationTargetNotFound, PublicationTargetUnavailable):
+                await asyncio.to_thread(
+                    self._record_usage_best_effort,
+                    publication,
+                    identity,
+                    normalized_path,
+                    request.method,
+                    model,
+                    503,
+                    None,
+                    None,
+                    None,
+                    "unavailable",
+                    started_at,
+                    None,
+                )
                 return JSONResponse(
                     status_code=503,
                     content={"error": {"message": "model service is unavailable"}},
                 )
             except httpx.HTTPError:
+                await asyncio.to_thread(
+                    self._record_usage_best_effort,
+                    publication,
+                    identity,
+                    normalized_path,
+                    request.method,
+                    model,
+                    502,
+                    None,
+                    None,
+                    None,
+                    "unavailable",
+                    started_at,
+                    None,
+                )
                 return JSONResponse(
                     status_code=502,
                     content={"error": {"message": "model service request failed"}},
@@ -467,7 +536,16 @@ class ServicePublicationManager:
                 if name.lower() in self._RESPONSE_HEADERS
             }
             return StreamingResponse(
-                self._iter_upstream(upstream, client, publication),
+                self._iter_upstream(
+                    upstream,
+                    client,
+                    publication,
+                    identity,
+                    model,
+                    normalized_path,
+                    request.method,
+                    started_at,
+                ),
                 status_code=upstream.status_code,
                 headers=headers,
             )
@@ -531,13 +609,24 @@ class ServicePublicationManager:
         upstream: httpx.Response,
         client: httpx.AsyncClient,
         publication: ServicePublication,
+        identity: GatewayRequestIdentity,
+        model: str | None,
+        endpoint: str,
+        method: str,
+        started_at: float,
     ) -> AsyncIterator[bytes]:
         last_validation = 0.0
+        captured = bytearray()
         try:
             async for chunk in upstream.aiter_raw():
+                captured.extend(chunk)
+                if len(captured) > self._MAX_USAGE_CAPTURE_BYTES:
+                    del captured[: len(captured) - self._MAX_USAGE_CAPTURE_BYTES]
                 now = time.monotonic()
                 if now - last_validation >= 0.25:
-                    current = await asyncio.to_thread(self._publication_is_current, publication)
+                    current = await asyncio.to_thread(
+                        self._publication_is_current, publication, identity
+                    )
                     if not current:
                         break
                     last_validation = now
@@ -545,15 +634,165 @@ class ServicePublicationManager:
         finally:
             await upstream.aclose()
             await client.aclose()
+            prompt_tokens, completion_tokens, total_tokens = self._extract_usage(bytes(captured))
+            await asyncio.to_thread(
+                self._record_usage_best_effort,
+                publication,
+                identity,
+                endpoint,
+                method,
+                model,
+                upstream.status_code,
+                prompt_tokens,
+                completion_tokens,
+                total_tokens,
+                "upstream" if total_tokens is not None else "unavailable",
+                started_at,
+                upstream.headers.get("x-request-id"),
+            )
 
-    def _publication_is_current(self, publication: ServicePublication) -> bool:
+    def _authenticate_request(
+        self,
+        publication: ServicePublication | None,
+        supplied_key: str,
+    ) -> tuple[GatewayRequestIdentity | None, tuple[int, str] | None]:
+        if publication is None:
+            return None, (401, "invalid API key")
+        if self.gateway_store is not None:
+            token = self.gateway_store.find_token_by_key(supplied_key)
+            if token is not None:
+                if not token.enabled or not token.consumer_enabled:
+                    return None, (401, "API key is disabled")
+                if token.expires_in_past():
+                    return None, (401, "API key has expired")
+                if token.quota_exhausted():
+                    return None, (429, "API key token quota is exhausted")
+                if not self.gateway_store.can_access_publication(
+                    token.token_id, publication.publication_id
+                ):
+                    return None, (403, "API key is not allowed to access this model")
+                return GatewayRequestIdentity(token.token_id, token.consumer_id), None
+        if self.verify_key(publication, supplied_key):
+            return (
+                GatewayRequestIdentity(None, None, legacy_key_hash=publication.api_key_hash),
+                None,
+            )
+        return None, (401, "invalid API key")
+
+    def _publication_is_current(
+        self,
+        publication: ServicePublication,
+        identity: GatewayRequestIdentity,
+    ) -> bool:
         current = self.store.get_enabled_by_id(publication.publication_id)
-        return bool(
+        if not (
             current
             and current.target_type == publication.target_type
             and current.target_id == publication.target_id
-            and hmac.compare_digest(current.api_key_hash, publication.api_key_hash)
+        ):
+            return False
+        if identity.token_id is not None:
+            if self.gateway_store is None:
+                return False
+            try:
+                token = self.gateway_store.get_token(identity.token_id)
+            except GatewayTokenNotFound:
+                return False
+            return token.is_usable() and self.gateway_store.can_access_publication(
+                token.token_id, publication.publication_id
+            )
+        return bool(
+            identity.legacy_key_hash
+            and hmac.compare_digest(current.api_key_hash, identity.legacy_key_hash)
         )
+
+    @staticmethod
+    def _request_model(body: bytes) -> str | None:
+        if not body:
+            return None
+        try:
+            payload = json.loads(body)
+        except (UnicodeDecodeError, ValueError):
+            return None
+        model = payload.get("model") if isinstance(payload, dict) else None
+        return model if isinstance(model, str) and model else None
+
+    @classmethod
+    def _extract_usage(cls, payload: bytes) -> tuple[int | None, int | None, int | None]:
+        if not payload:
+            return None, None, None
+        text = payload.decode("utf-8", errors="replace")
+        candidates = [text]
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("data:"):
+                data = stripped[5:].strip()
+                if data and data != "[DONE]":
+                    candidates.append(data)
+        for candidate in reversed(candidates):
+            try:
+                parsed = json.loads(candidate)
+            except ValueError:
+                continue
+            usage = parsed.get("usage") if isinstance(parsed, dict) else None
+            if not isinstance(usage, dict):
+                continue
+            prompt = cls._optional_token_count(usage.get("prompt_tokens"))
+            completion = cls._optional_token_count(usage.get("completion_tokens"))
+            total = cls._optional_token_count(usage.get("total_tokens"))
+            if total is None and prompt is not None and completion is not None:
+                total = prompt + completion
+            if prompt is not None or completion is not None or total is not None:
+                return prompt, completion, total
+        return None, None, None
+
+    @staticmethod
+    def _optional_token_count(value: object) -> int | None:
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return value
+        return None
+
+    def _record_usage_best_effort(
+        self,
+        publication: ServicePublication,
+        identity: GatewayRequestIdentity,
+        endpoint: str,
+        method: str,
+        model: str | None,
+        status_code: int,
+        prompt_tokens: int | None,
+        completion_tokens: int | None,
+        total_tokens: int | None,
+        usage_source: str,
+        started_at: float,
+        request_id: str | None,
+    ) -> None:
+        if self.gateway_store is None:
+            return
+        try:
+            target = self._resolve_target(
+                publication.target_type, publication.target_id, require_running=False
+            )
+            self.gateway_store.record_usage(
+                token_id=identity.token_id,
+                consumer_id=identity.consumer_id,
+                publication_id=publication.publication_id,
+                publication_label=target.label,
+                target_type=target.target_type,
+                target_id=target.target_id,
+                model=model,
+                endpoint=endpoint,
+                method=method,
+                status_code=status_code,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                usage_source=usage_source,
+                latency_ms=int((time.monotonic() - started_at) * 1000),
+                request_id=request_id,
+            )
+        except Exception:  # noqa: BLE001 - usage accounting must not break the proxy
+            LOGGER.exception("could not record gateway usage for %s", publication.publication_id)
 
     @staticmethod
     def _request_api_key(request: Request) -> str:
