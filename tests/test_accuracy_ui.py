@@ -74,4 +74,4 @@ def test_accuracy_static_assets_share_cache_busting_version(client: TestClient) 
 
     assert css_version is not None
     assert js_version is not None
-    assert css_version.group(1) == js_version.group(1) == "20261104-remove-gateway"
+    assert css_version.group(1) == js_version.group(1) == "20261104-deployment-overview"

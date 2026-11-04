@@ -3,7 +3,7 @@ import { FitAddon } from "/static/vendor/node_modules/@xterm/addon-fit/lib/addon
 import html2canvas from "/static/vendor/node_modules/html2canvas/dist/html2canvas.esm.js";
 import { initFeishuNotifications, loadFeishuNotifications } from "/static/feishu.js?v=20261027-feishu-pkce";
 
-const state = { deployments: [], aiServices: [], aiServicesApiAvailable: null, aiServiceStopping: new Set(), images: [], localModels: [], benchmarks: [], aiBenchmarkSessions: [], arenaRuns: [], arenaExpandedIds: new Set(), arenaToggledIds: new Set(), arenaBaselineDetail: null, arenaBaselinePresetKey: null, arenaRuntimeProfile: null, arenaRuntimeTargetKey: null, arenaLogId: null, arenaLogTimer: null, accuracyRuns: [], accuracyAvailable: null, accuracyLoading: false, accuracyDetailId: null, accuracyDetailTimer: null, selectedId: null, eventSource: null, aiSessions: [], aiProviders: [], aiSessionId: null, aiSessionTaskType: null, aiSessionCategory: null, aiSessionFocusId: null, aiSessionPending: null, aiSessionSubmitting: false, aiSessionResuming: false, aiDeployTarget: null, aiOneClickPending: false, aiOneClickRequest: null, terminal: null, fitAddon: null, terminalSocket: null, aiAutoResume: null, aiChatView: localStorage.getItem("uniform-ai-chat-view") === "terminal" ? "terminal" : "chat", aiConversation: null, aiConversationTimer: null, aiConversationLoading: false, aiConversationSignature: "", aiChatLocalMessages: [], aiChatSending: false, serviceLogSocket: null, serviceLogSource: null, serviceLogResourceId: null, serviceLogPollTimer: null, serviceLogLastUpdate: 0, serviceLogs: "", serviceTelemetry: null, serviceLogsPaused: false, servicePublicationTarget: null, servicePublicationStatus: null, servicePublicationGeneration: 0, servicePublicationBusy: false, servicePublicationFocus: "lan" };
+const state = { deployments: [], aiServices: [], aiServicesApiAvailable: null, aiServiceStopping: new Set(), images: [], localModels: [], benchmarks: [], aiBenchmarkSessions: [], arenaRuns: [], arenaExpandedIds: new Set(), arenaToggledIds: new Set(), arenaBaselineDetail: null, arenaBaselinePresetKey: null, arenaRuntimeProfile: null, arenaRuntimeTargetKey: null, arenaLogId: null, arenaLogTimer: null, accuracyRuns: [], accuracyAvailable: null, accuracyLoading: false, accuracyDetailId: null, accuracyDetailTimer: null, selectedId: null, detailMetricsTimer: null, eventSource: null, aiSessions: [], aiProviders: [], aiSessionId: null, aiSessionTaskType: null, aiSessionCategory: null, aiSessionFocusId: null, aiSessionPending: null, aiSessionSubmitting: false, aiSessionResuming: false, aiDeployTarget: null, aiOneClickPending: false, aiOneClickRequest: null, terminal: null, fitAddon: null, terminalSocket: null, aiAutoResume: null, aiChatView: localStorage.getItem("uniform-ai-chat-view") === "terminal" ? "terminal" : "chat", aiConversation: null, aiConversationTimer: null, aiConversationLoading: false, aiConversationSignature: "", aiChatLocalMessages: [], aiChatSending: false, serviceLogSocket: null, serviceLogSource: null, serviceLogResourceId: null, serviceLogPollTimer: null, serviceLogLastUpdate: 0, serviceLogs: "", serviceTelemetry: null, serviceLogsPaused: false, servicePublicationTarget: null, servicePublicationStatus: null, servicePublicationGeneration: 0, servicePublicationBusy: false, servicePublicationFocus: "lan" };
 const statusLabels = {
   queued: "等待中", preflight: "环境检查", downloading_model: "下载模型",
   pulling_image: "准备镜像", starting_container: "启动容器", loading_model: "加载模型",
@@ -380,28 +380,207 @@ function setConnection(online) {
   document.querySelector("#connection-text").textContent = online ? "平台服务已连接" : "平台连接已中断";
 }
 
-async function openDetail(id) { state.selectedId = id; document.querySelector("#detail-drawer").classList.add("open"); document.querySelector("#drawer-backdrop").classList.add("open"); await refreshDetail(); }
-function closeDetail() { state.selectedId = null; document.querySelector("#detail-drawer").classList.remove("open"); document.querySelector("#drawer-backdrop").classList.remove("open"); }
+function stopDetailMetricsPolling() { if(state.detailMetricsTimer) clearInterval(state.detailMetricsTimer); state.detailMetricsTimer=null; }
+async function openDetail(id) { stopDetailMetricsPolling(); state.selectedId = id; document.querySelector("#detail-drawer").classList.add("open"); document.querySelector("#drawer-backdrop").classList.add("open"); await refreshDetail(); }
+function closeDetail() { stopDetailMetricsPolling(); state.selectedId = null; document.querySelector("#detail-drawer").classList.remove("open"); document.querySelector("#drawer-backdrop").classList.remove("open"); }
+
+function detailNumber(value) { if(value===null||value===undefined||value==="") return null; const number=Number(value); return Number.isFinite(number)?number:null; }
+function detailCount(value) { const number=detailNumber(value); return number==null?"—":new Intl.NumberFormat("zh-CN",{maximumFractionDigits:0}).format(number); }
+function detailDecimal(value,digits=1) { const number=detailNumber(value); return number==null?"—":number.toFixed(digits); }
+function detailDate(value) { if(!value) return "—"; const date=new Date(value); return Number.isNaN(date.getTime())?"—":date.toLocaleString("zh-CN",{hour12:false}); }
+function detailSourceLabel(source) { return ({huggingface:"Hugging Face",modelscope:"ModelScope",local:"本地目录"})[source]||source||"未知"; }
+function detailCompatibilityLabel(value) { return ({likely:"适合部署",experimental:"实验性支持",incompatible:"不兼容"})[value]||value||"未评估"; }
+function detailMetricCard(label,value,note="") { return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong>${note?`<small>${escapeHtml(note)}</small>`:""}</div>`; }
+
+function detailRuntimeMetricsMarkup(performance={}) {
+  const vllm=performance.vllm||{};
+  const requests=detailNumber(vllm["vllm:request_success_total"]);
+  const prompt=detailNumber(vllm["vllm:prompt_tokens_total"]);
+  const generated=detailNumber(vllm["vllm:generation_tokens_total"]);
+  const total=prompt==null&&generated==null?null:(prompt||0)+(generated||0);
+  const ttftCount=detailNumber(vllm["vllm:time_to_first_token_seconds_count"]);
+  const ttftSum=detailNumber(vllm["vllm:time_to_first_token_seconds_sum"]);
+  const averageTtft=ttftCount&&ttftSum!=null?ttftSum/ttftCount*1000:null;
+  const tokensPerRequest=requests&&total!=null?total/requests:null;
+  return [
+    detailMetricCard("成功请求",detailCount(requests),"自本次启动累计"),
+    detailMetricCard("总 Tokens",detailCount(total),"输入 + 生成"),
+    detailMetricCard("输入 Tokens",detailCount(prompt),"Prompt 累计"),
+    detailMetricCard("生成 Tokens",detailCount(generated),"Completion 累计"),
+    detailMetricCard("平均首 Token",averageTtft==null?"—":`${detailDecimal(averageTtft,1)} ms`,"TTFT"),
+    detailMetricCard("每请求 Tokens",tokensPerRequest==null?"—":detailDecimal(tokensPerRequest,0),"平均")
+  ].join("");
+}
+
+function detailContainerMetricsMarkup(performance={}) {
+  const container=performance.container||{};
+  return [
+    detailMetricCard("容器 CPU",container.cpu_percent||"—","Docker 实时"),
+    detailMetricCard("统一内存",container.memory||"—","DGX Spark 共享内存池"),
+    detailMetricCard("内存占比",container.memory_percent||"—","容器统计"),
+    detailMetricCard("网络 I/O",container.network_io||"—","累计收发"),
+    detailMetricCard("磁盘 I/O",container.block_io||"—","累计读写"),
+    detailMetricCard("进程数",container.pids||"—","容器内 PID")
+  ].join("");
+}
+
+function applyDetailPerformance(performance) {
+  const runtime=document.querySelector("#detail-runtime-metrics");
+  const container=document.querySelector("#detail-container-metrics");
+  if(runtime) runtime.innerHTML=detailRuntimeMetricsMarkup(performance);
+  if(container) container.innerHTML=detailContainerMetricsMarkup(performance);
+  const updated=document.querySelector("#detail-metrics-updated");
+  const hasMetrics=Boolean(Object.keys(performance?.vllm||{}).length||Object.keys(performance?.container||{}).length);
+  if(updated) updated.textContent=hasMetrics?`${new Date().toLocaleTimeString("zh-CN",{hour12:false})} 更新`:"引擎指标暂不可达";
+}
+
+async function refreshDetailMetrics(id) {
+  if(state.selectedId!==id||!document.querySelector("#detail-runtime-metrics")) return;
+  try { const performance=await api(`/api/v1/deployments/${id}/metrics`); if(state.selectedId===id) applyDetailPerformance(performance); }
+  catch (_) { const updated=document.querySelector("#detail-metrics-updated"); if(updated) updated.textContent="指标暂不可用"; }
+}
+
+async function fetchDeploymentCatalogMetadata(item) {
+  const modelId=item.parameters?.served_model_name||item.model_id;
+  const query=String(modelId).split("/").pop()||modelId;
+  try {
+    const payload=await api(`/api/v1/catalog/models?query=${encodeURIComponent(query)}&limit=50`);
+    const items=payload.items||[];
+    const normalized=String(modelId).toLowerCase();
+    return items.find(candidate=>candidate.model_id===modelId)||items.find(candidate=>String(candidate.model_id).toLowerCase()===normalized)||items.find(candidate=>String(candidate.model_id).toLowerCase().split("/").pop()===query.toLowerCase())||null;
+  } catch (_) { return null; }
+}
+
+async function fetchDeploymentLocalMetadata(item) {
+  const localPath=item.parameters?.local_model_path;
+  if(!localPath) return null;
+  try {
+    const payload=await api("/api/v1/local-models");
+    const normalizedPath=String(localPath).replace(/\/+$/,"");
+    return (payload.items||[]).find(candidate=>String(candidate.path).replace(/\/+$/,"")===normalizedPath)||null;
+  } catch (_) { return null; }
+}
+
+function latestDeploymentBenchmark(payload,id) {
+  return (payload?.items||[]).filter(item=>item.target_type==="deployment"&&item.target_id===id&&item.status==="completed"&&item.metrics).sort((left,right)=>new Date(right.finished_at||right.updated_at)-new Date(left.finished_at||left.updated_at))[0]||null;
+}
+
+function detailBenchmarkMarkup(benchmark) {
+  if(!benchmark) return `<div class="detail-empty-line"><strong>暂无性能基线</strong><span>服务运行后可使用下方“自定义测试”生成吞吐、延迟和成功率记录。</span></div>`;
+  const metrics=benchmark.metrics;
+  const parameters=benchmark.parameters;
+  return `<div class="detail-benchmark-head"><div><strong>最近一次自定义测试</strong><small>${escapeHtml(detailDate(benchmark.finished_at||benchmark.updated_at))}</small></div><span class="status completed">已完成</span></div>
+    <div class="detail-metric-grid detail-benchmark-grid">
+      ${detailMetricCard("成功率",`${detailDecimal(metrics.success_rate,1)}%`,`${benchmark.successful_requests}/${parameters.total_requests} 成功`)}
+      ${detailMetricCard("请求吞吐",`${detailDecimal(metrics.request_throughput,2)} req/s`,"正式测试")}
+      ${detailMetricCard("输出吞吐",`${detailDecimal(metrics.output_token_throughput,1)} tok/s`,"Completion")}
+      ${detailMetricCard("平均延迟",`${detailDecimal(metrics.latency_average_ms,0)} ms`,"端到端")}
+      ${detailMetricCard("P95 延迟",`${detailDecimal(metrics.latency_p95_ms,0)} ms`,"尾延迟")}
+      ${detailMetricCard("Token 规模",`${parameters.input_tokens} → ${parameters.output_tokens}`,"预设输入 / 最大输出")}
+      ${detailMetricCard("并发",String(parameters.concurrency),"同时请求")}
+      ${detailMetricCard("正式请求",String(parameters.total_requests),"不含预热")}
+    </div>`;
+}
+
+function installDetailControls(item,isRunning) {
+  document.querySelector("#view-service-logs").addEventListener("click", () => openServiceLogs("deployment",item.id,item.display_name||item.model_id));
+  document.querySelector("#publish-deployment")?.addEventListener("click", () => openServicePublication("deployment",item.id,item.display_name||item.model_id));
+  document.querySelector("#publish-deployment-external")?.addEventListener("click", () => openServicePublication("deployment",item.id,item.display_name||item.model_id,"external"));
+  document.querySelector("#arena-deployment").addEventListener("click", () => { closeDetail(); openArenaForTarget("deployment",item.id); });
+  document.querySelector("#benchmark-deployment").addEventListener("click", () => { closeDetail(); openCustomBenchmarkForTarget("deployment",item.id); });
+  document.querySelector("#accuracy-deployment").addEventListener("click", () => { closeDetail(); openAccuracyForTarget("deployment",item.id); });
+  document.querySelector("#diagnose-with-ai").addEventListener("click", () => openAiForDeployment(item));
+  document.querySelector("#refresh-detail-metrics")?.addEventListener("click",()=>refreshDetailMetrics(item.id));
+  document.querySelector("#detail-log-details")?.addEventListener("toggle",async event=>{
+    if(!event.target.open||event.target.dataset.loaded) return;
+    const output=document.querySelector("#detail-inline-logs");
+    output.textContent="正在读取最近 120 行日志…";
+    try { const result=await api(`/api/v1/deployments/${item.id}/logs?tail=120`); if(state.selectedId===item.id){output.textContent=result.logs||"暂无日志";event.target.dataset.loaded="true";} }
+    catch(error) { output.textContent=`读取日志失败：${error.message}`; }
+  });
+  if(isRunning) state.detailMetricsTimer=setInterval(()=>refreshDetailMetrics(item.id),5000);
+}
+
 async function refreshDetail() {
   if (!state.selectedId) return;
+  const id=state.selectedId;
+  stopDetailMetricsPolling();
   try {
-    const [item, events, performance] = await Promise.all([api(`/api/v1/deployments/${state.selectedId}`), api(`/api/v1/deployments/${state.selectedId}/events`), api(`/api/v1/deployments/${state.selectedId}/metrics`)]);
-    let logs = "容器尚未创建。"; try { logs = (await api(`/api/v1/deployments/${state.selectedId}/logs?tail=120`)).logs; } catch (_) {}
+    const [item, events, performance, benchmarkPayload] = await Promise.all([
+      api(`/api/v1/deployments/${id}`),
+      api(`/api/v1/deployments/${id}/events`),
+      api(`/api/v1/deployments/${id}/metrics`),
+      api("/api/v1/benchmarks?limit=200").catch(()=>null)
+    ]);
+    const [catalog,localModel]=await Promise.all([fetchDeploymentCatalogMetadata(item),fetchDeploymentLocalMetadata(item)]);
+    if(state.selectedId!==id) return;
+    const metadata=catalog?.metadata||{};
+    const parameters=item.parameters;
+    const isRunning=item.status==="running";
+    const benchmark=latestDeploymentBenchmark(benchmarkPayload,id);
+    const endpoint=`http://127.0.0.1:${parameters.port}/v1`;
+    const contextLimit=parameters.max_model_len==null?"自动":`${detailCount(parameters.max_model_len)} tokens`;
+    const gpuBudget=`${detailDecimal(Number(parameters.gpu_memory_utilization)*100,0)}%`;
+    const architecture=localModel?.architecture||localModel?.model_type||metadata.architecture||metadata.model_type||"目录未收录";
+    const quantization=localModel?.quantization||metadata.quantization||"未标注";
+    const weightFormat=localModel?.weight_format||metadata.weight_format||"未知";
+    const weightSize=localModel?.total_bytes!=null?formatBytes(localModel.total_bytes):formatWeightSize(metadata);
+    const source=(parameters.local_model_path?"local":null)||catalog?.source||parameters.source;
+    const modelNote=parameters.local_model_path?`本地模型目录${localModel?" · 已检查 config 与权重文件":""}${catalog?" · 已匹配云端目录":""}`:(catalog?`来自 ${detailSourceLabel(catalog.source)} 模型目录缓存`:"模型目录未匹配，展示部署记录中可确认的配置");
+    const catalogFactLabel=catalog?"目录热度":localModel?"权重文件":"目录热度";
+    const catalogFactValue=catalog?`${formatCompact(catalog.downloads)} 下载`:localModel?`${localModel.weight_files||0} 个`:"未知";
+    const modelIdLabel=String(item.model_id).split("/").pop()||item.model_id;
+    document.querySelector("#detail-eyebrow").textContent=isRunning?"RUNNING MODEL DETAIL":"DEPLOYMENT DETAIL";
     document.querySelector("#detail-title").textContent = item.display_name || item.model_id;
     document.querySelector("#detail-content").innerHTML = `
-      <div class="detail-meta"><div><span>状态</span>${statusLabels[item.status] || item.status}</div><div><span>进度</span>${Math.round(item.progress*100)}%</div><div><span>端口</span>${item.parameters.port}</div><div><span>Revision</span>${escapeHtml(item.revision || "等待解析")}</div></div>
+      <section class="detail-service-hero">
+        <div class="detail-service-kicker"><span class="status ${item.status}">${statusLabels[item.status] || item.status}</span><span>${escapeHtml(detailSourceLabel(source))}</span>${catalog?`<span class="compatibility ${escapeHtml(catalog.compatibility)}">${escapeHtml(detailCompatibilityLabel(catalog.compatibility))}</span>`:""}</div>
+        <strong class="detail-service-model">${escapeHtml(modelIdLabel)}</strong>
+        <div class="detail-service-caption">${isRunning?`服务端口 ${parameters.port}`:`部署进度 ${Math.round(item.progress*100)}%`}${item.revision?` · Revision ${escapeHtml(String(item.revision).slice(0,12))}`:""}${item.updated_at?` · 更新于 ${escapeHtml(detailDate(item.updated_at))}`:""}</div>
+      </section>
       ${item.error_message ? `<p class="form-error">${escapeHtml(item.error_message)}</p>` : ""}
-      <h3>运行指标</h3><div class="detail-meta"><div><span>容器内存</span>${escapeHtml(performance.container.memory || "—")}</div><div><span>生成 Tokens</span>${performance.vllm["vllm:generation_tokens_total"] || 0}</div><div><span>请求数</span>${performance.vllm["vllm:request_success_total"] || 0}</div><div><span>容器 CPU</span>${escapeHtml(performance.container.cpu_percent || "—")}</div></div>
-      <h3>执行时间线</h3><div class="timeline">${events.items.map(event => `<div class="timeline-item"><strong>${statusLabels[event.to_status] || event.event_type}</strong><br><small>${escapeHtml(event.message)}</small></div>`).join("")}</div>
-      <h3>vLLM 日志</h3><pre class="logs">${escapeHtml(logs || "暂无日志")}</pre>`;
-    document.querySelector("#detail-content").insertAdjacentHTML("beforeend", `<div class="dialog-actions"><button id="view-service-logs" class="secondary" data-id="${item.id}">实时服务日志</button>${!item.archived_at&&["running","stopped"].includes(item.status)?`<button id="publish-deployment" class="secondary" data-id="${item.id}">局域网访问</button><button id="publish-deployment-external" class="secondary" data-id="${item.id}">外网访问</button>`:""}<button id="arena-deployment" class="secondary" data-id="${item.id}" ${!item.archived_at&&item.status==="running"?"":"disabled title=\"服务运行后才能评测\""}>Arena 评测</button><button id="benchmark-deployment" class="secondary" data-id="${item.id}" ${!item.archived_at&&item.status==="running"?"":"disabled title=\"服务运行后才能测试\""}>自定义测试</button><button id="accuracy-deployment" class="secondary" data-id="${item.id}" ${!item.archived_at&&item.status==="running"?"":"disabled title=\"服务运行后才能评测\""}>精度评测</button><button id="diagnose-with-ai" class="primary" data-id="${item.id}">使用 AI 诊断此部署</button></div>`);
-    document.querySelector("#view-service-logs").addEventListener("click", () => openServiceLogs("deployment",item.id,item.display_name||item.model_id));
-    document.querySelector("#publish-deployment")?.addEventListener("click", () => openServicePublication("deployment",item.id,item.display_name||item.model_id));
-    document.querySelector("#publish-deployment-external")?.addEventListener("click", () => openServicePublication("deployment",item.id,item.display_name||item.model_id,"external"));
-    document.querySelector("#arena-deployment").addEventListener("click", () => { closeDetail(); openArenaForTarget("deployment",item.id); });
-    document.querySelector("#benchmark-deployment").addEventListener("click", () => { closeDetail(); openCustomBenchmarkForTarget("deployment",item.id); });
-    document.querySelector("#accuracy-deployment").addEventListener("click", () => { closeDetail(); openAccuracyForTarget("deployment",item.id); });
-    document.querySelector("#diagnose-with-ai").addEventListener("click", () => openAiForDeployment(item));
+      <section class="detail-section">
+        <div class="detail-section-heading"><div><h3>模型规格</h3><p>${escapeHtml(modelNote)}</p></div></div>
+        <div class="detail-fact-grid">
+          <div class="detail-fact"><span>模型结构</span><strong title="${escapeHtml(architecture)}">${escapeHtml(architecture)}</strong></div>
+          <div class="detail-fact"><span>参数量</span><strong>${escapeHtml(formatParameterCount(metadata.parameter_count))}</strong></div>
+          <div class="detail-fact"><span>量化 / 精度</span><strong>${escapeHtml(quantization)}</strong></div>
+          <div class="detail-fact"><span>权重格式</span><strong>${escapeHtml(weightFormat)}</strong></div>
+          <div class="detail-fact"><span>权重大小</span><strong>${escapeHtml(weightSize)}</strong></div>
+          <div class="detail-fact"><span>${escapeHtml(catalogFactLabel)}</span><strong>${escapeHtml(catalogFactValue)}</strong></div>
+        </div>
+      </section>
+      <section class="detail-section">
+        <div class="detail-section-heading"><div><h3>服务配置</h3><p>推理端点、上下文与容器资源预算。</p></div></div>
+        <div class="detail-fact-grid">
+          <div class="detail-fact detail-fact-wide"><span>OpenAI API</span><strong class="detail-endpoint"><code>${escapeHtml(endpoint)}</code></strong></div>
+          <div class="detail-fact"><span>上下文上限</span><strong>${escapeHtml(contextLimit)}</strong></div>
+          <div class="detail-fact"><span>GPU 内存预算</span><strong>${escapeHtml(gpuBudget)}</strong></div>
+          <div class="detail-fact"><span>推理引擎</span><strong>vLLM</strong></div>
+          <div class="detail-fact"><span>模型来源</span><strong>${escapeHtml(detailSourceLabel(source))}</strong></div>
+          <div class="detail-fact detail-fact-wide"><span>容器镜像</span><strong title="${escapeHtml(parameters.image)}">${escapeHtml(parameters.image)}</strong></div>
+        </div>
+      </section>
+      <section class="detail-section detail-performance-section">
+        <div class="detail-section-heading"><div><h3>推理性能</h3><p>运行指标每 5 秒自动刷新；Token 计数自本次服务启动累计。</p></div><div class="detail-section-tools"><small id="detail-metrics-updated"></small><button id="refresh-detail-metrics" type="button" class="secondary">刷新</button></div></div>
+        <div id="detail-runtime-metrics" class="detail-metric-grid"></div>
+        <div id="detail-container-metrics" class="detail-metric-grid detail-container-grid"></div>
+      </section>
+      <section class="detail-section">
+        <div class="detail-section-heading"><div><h3>性能基线</h3><p>来自平台自定义性能测试的结构化结果。</p></div></div>
+        ${detailBenchmarkMarkup(benchmark)}
+      </section>
+      <details class="detail-advanced" ${isRunning?"":"open"}>
+        <summary><span>部署记录</span><small>${events.items.length} 个步骤${isRunning?" · 默认收起":""}</small></summary>
+        ${events.items.length?`<div class="timeline detail-timeline">${events.items.map(event => `<div class="timeline-item"><strong>${statusLabels[event.to_status] || event.event_type}</strong><br><small>${escapeHtml(event.message)}</small></div>`).join("")}</div>`:'<div class="detail-empty-line"><span>暂无部署事件记录。</span></div>'}
+      </details>
+      <details id="detail-log-details" class="detail-advanced">
+        <summary><span>原始运行日志</span><small>展开时加载最近 120 行</small></summary>
+        <pre id="detail-inline-logs" class="logs">展开后加载…</pre>
+      </details>
+      <div class="dialog-actions detail-actions"><button id="view-service-logs" class="secondary" data-id="${item.id}">实时服务日志</button>${!item.archived_at&&["running","stopped"].includes(item.status)?`<button id="publish-deployment" class="secondary" data-id="${item.id}">局域网访问</button><button id="publish-deployment-external" class="secondary" data-id="${item.id}">外网访问</button>`:""}<button id="arena-deployment" class="secondary" data-id="${item.id}" ${!item.archived_at&&item.status==="running"?"":"disabled title=\"服务运行后才能评测\""}>Arena 评测</button><button id="benchmark-deployment" class="secondary" data-id="${item.id}" ${!item.archived_at&&item.status==="running"?"":"disabled title=\"服务运行后才能测试\""}>自定义测试</button><button id="accuracy-deployment" class="secondary" data-id="${item.id}" ${!item.archived_at&&item.status==="running"?"":"disabled title=\"服务运行后才能评测\""}>精度评测</button><button id="diagnose-with-ai" class="primary" data-id="${item.id}">使用 AI 诊断此部署</button></div>`;
+    applyDetailPerformance(performance);
+    installDetailControls(item,isRunning);
   } catch (error) { toast(error.message, true); }
 }
 

@@ -179,6 +179,7 @@ def test_health(client: TestClient) -> None:
     assert 'id="ai-multi-template-dialog"' in index.text
     assert 'id="reuse-multi-node-template"' in index.text
     assert 'id="create-single-node-ai-deploy"' in index.text
+    assert 'id="detail-eyebrow"' in index.text
     assert 'src="/static/app.js?v=' in index.text
 
     stylesheet = client.get("/static/app.css")
@@ -208,6 +209,12 @@ def test_health(client: TestClient) -> None:
     assert "/api/v1/ai/deployment-templates/latest" in application.text
     assert "/api/v1/ai/deployment-templates/launch" in application.text
     assert "client_request_id:requestId" in application.text
+    assert "detailRuntimeMetricsMarkup" in application.text
+    assert "detailBenchmarkMarkup" in application.text
+    assert "fetchDeploymentLocalMetadata" in application.text
+    assert "detail-advanced" in application.text
+    assert "/api/v1/benchmarks?limit=200" in application.text
+    assert "<h3>执行时间线</h3>" not in application.text
     assert "局域网访问" in application.text
     assert "/api/v1/service-publications/" in application.text
     assert (
