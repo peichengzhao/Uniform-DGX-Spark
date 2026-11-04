@@ -416,7 +416,7 @@ function detailContainerMetricsMarkup(performance={}) {
   const container=performance.container||{};
   return [
     detailMetricCard("容器 CPU",container.cpu_percent||"—","Docker 实时"),
-    detailMetricCard("统一内存",container.memory||"—","DGX Spark 共享内存池"),
+    detailMetricCard("容器内存",container.memory||"—","cgroup 统计，不含 KV Cache 预留"),
     detailMetricCard("内存占比",container.memory_percent||"—","容器统计"),
     detailMetricCard("网络 I/O",container.network_io||"—","累计收发"),
     detailMetricCard("磁盘 I/O",container.block_io||"—","累计读写"),
@@ -562,7 +562,7 @@ async function refreshDetail() {
         </div>
       </section>
       <section class="detail-section detail-performance-section">
-        <div class="detail-section-heading"><div><h3>推理性能</h3><p>运行指标每 5 秒自动刷新；Token 计数自本次服务启动累计。</p></div><div class="detail-section-tools"><small id="detail-metrics-updated"></small><button id="refresh-detail-metrics" type="button" class="secondary">刷新</button></div></div>
+        <div class="detail-section-heading"><div><h3>推理性能</h3><p>运行指标每 5 秒自动刷新；容器内存为 cgroup 统计，不含 vLLM 预留的 KV Cache。</p></div><div class="detail-section-tools"><small id="detail-metrics-updated"></small><button id="refresh-detail-metrics" type="button" class="secondary">刷新</button></div></div>
         <div id="detail-runtime-metrics" class="detail-metric-grid"></div>
         <div id="detail-container-metrics" class="detail-metric-grid detail-container-grid"></div>
       </section>
