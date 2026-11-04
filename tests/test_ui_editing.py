@@ -75,7 +75,8 @@ def make_manager(tmp_path: Path, codex_body: str) -> tuple[UIEditManager, Path]:
         "import json, sys, time\n"
         "from pathlib import Path\n"
         "args = sys.argv[1:]\n"
-        "resume = len(args) > 1 and args[1] == 'resume'\n"
+        "resume = 'resume' in args[:4]\n"
+        "print(f'args={args}', flush=True)\n"
         "images = [args[index + 1] for index, value in enumerate(args) if value == '-i']\n"
         "output = Path(args[args.index('--output-last-message') + 1])\n"
         "print('Authorization: Bearer very-secret-token', flush=True)\n"
@@ -124,6 +125,7 @@ def test_ui_edit_directly_edits_commits_and_can_revert(tmp_path: Path) -> None:
     assert "New title" in (web_dir / "index.html").read_text(encoding="utf-8")
     assert (web_dir / "ui-helper.js").is_file()
     logs = manager.logs(job.id)
+    assert "--no-daemon" in logs.logs
     assert "very-secret-token" not in logs.logs
     assert "Bearer [REDACTED]" in logs.logs
     events = manager.conversation(job.id).events

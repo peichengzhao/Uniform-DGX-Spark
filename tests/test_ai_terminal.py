@@ -652,7 +652,7 @@ def test_ai_sessions_filter_and_resume_existing_model_context(tmp_path: Path) ->
     fake_codex = tmp_path / "fake-codex"
     fake_codex.write_text(
         "#!/bin/sh\n"
-        'if [ "$1" = "resume" ]; then\n'
+        'if [ "$2" = "resume" ]; then\n'
         '  echo resumed:"$*"\n'
         "  sleep 5\n"
         "else\n"
@@ -947,7 +947,7 @@ def test_auto_resume_restarts_cli_after_unexpected_exit(tmp_path: Path) -> None:
     fake_codex = tmp_path / "fake-codex"
     fake_codex.write_text(
         "#!/bin/sh\n"
-        'if [ "$1" = "resume" ]; then\n'
+            'if [ "$2" = "resume" ]; then\n'
         "  echo resumed:$*\n"
         "  sleep 5\n"
         "  exit 0\n"
@@ -1244,6 +1244,35 @@ def test_benchmark_analysis_does_not_depend_on_auto_review(tmp_path: Path) -> No
     assert command[command.index("--sandbox") + 1] == "workspace-write"
     assert command[command.index("--ask-for-approval") + 1] == "never"
     assert not any("approvals_reviewer" in item for item in command)
+
+
+def test_codex_commands_always_disable_the_shared_daemon(tmp_path: Path) -> None:
+    request = AISessionCreate(
+        provider="codex",
+        task_type="deployment",
+        target_model_id="org/daemon-test",
+        target_source="huggingface",
+        initial_prompt="deploy this model",
+    )
+
+    command = AITerminalManager._command("codex", request, tmp_path)
+    assert command[1] == "--no-daemon"
+    assert command.count("--no-daemon") == 1
+
+    database = Database(tmp_path / "daemon.db")
+    database.initialize()
+    session = AISessionStore(database).create(request, str(tmp_path))
+    resumed = AITerminalManager._resume_command("codex", session, tmp_path, "继续")
+    assert resumed[1] == "--no-daemon"
+    assert resumed.count("--no-daemon") == 1
+
+    fresh = AITerminalManager._fresh_resume_command(
+        "codex", session, tmp_path, "继续"
+    )
+    assert fresh[1] == "--no-daemon"
+    assert fresh.count("--no-daemon") == 1
+    assert "resume" not in fresh
+    assert "--last" not in fresh
 
 
 def test_ai_model_session_has_scoped_deployment_capability(

@@ -655,11 +655,20 @@ class UIEditManager:
         ]
         executable = shutil.which(self.codex_binary) or self.codex_binary
         if session_id:
-            command = [executable, "exec", "resume", *common, session_id, prompt]
+            command = [
+                executable,
+                "--no-daemon",
+                "exec",
+                "resume",
+                *common,
+                session_id,
+                prompt,
+            ]
         else:
             image_arguments = [part for path in image_paths for part in ("-i", str(path))]
             command = [
                 executable,
+                "--no-daemon",
                 "exec",
                 "--sandbox",
                 "danger-full-access",

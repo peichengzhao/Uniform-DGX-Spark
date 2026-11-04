@@ -2035,15 +2035,14 @@ Report observed values only. Do not include tokens, credentials, full prompts, o
         if request.provider == "codex":
             command = [
                 executable,
+                "--no-daemon",
                 "--no-alt-screen",
                 "--cd",
                 str(workspace),
             ]
             if request.task_type == "dataset_integration":
-                command.append("--no-daemon")
                 command.extend(cls._dataset_codex_config())
             elif request.task_type == "accuracy_evaluation":
-                command.append("--no-daemon")
                 command.extend(cls._accuracy_codex_config())
             elif (
                 request.task_type == "benchmark_analysis"
@@ -2202,6 +2201,7 @@ Report observed values only. Do not include tokens, credentials, full prompts, o
         if session.provider == "codex":
             command = [
                 executable,
+                "--no-daemon",
                 "resume",
                 "--last",
                 "--no-alt-screen",
@@ -2209,7 +2209,6 @@ Report observed values only. Do not include tokens, credentials, full prompts, o
                 str(workspace),
             ]
             if session.task_type == "dataset_integration":
-                command.append("--no-daemon")
                 command.extend(AITerminalManager._dataset_codex_config())
                 if session.ai_model:
                     command.extend(["--model", session.ai_model])
@@ -2223,7 +2222,6 @@ Report observed values only. Do not include tokens, credentials, full prompts, o
                 )
                 return command
             if session.task_type == "accuracy_evaluation":
-                command.append("--no-daemon")
                 command.extend(AITerminalManager._accuracy_codex_config())
                 if session.ai_model:
                     command.extend(["--model", session.ai_model])
@@ -2317,7 +2315,9 @@ Report observed values only. Do not include tokens, credentials, full prompts, o
             executable, session, workspace, prompt, deepseek_args=deepseek_args
         )
         if session.provider == "codex":
-            return [command[0], *command[3:]]
+            command.remove("resume")
+            command.remove("--last")
+            return command
         try:
             command.remove("--continue")
         except ValueError:
