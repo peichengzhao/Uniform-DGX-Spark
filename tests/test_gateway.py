@@ -498,22 +498,23 @@ def test_gateway_key_scope_revocation_and_usage_filters(tmp_path: Path, monkeypa
         assert limited_usage["summary"]["total_tokens"] == 12
 
 
-def test_gateway_page_exposes_models_callers_and_usage_center(tmp_path: Path) -> None:
+def test_gateway_configuration_page_is_removed_from_the_console(tmp_path: Path) -> None:
     app = _app(tmp_path)
     with TestClient(app) as client:
         html = client.get("/").text
-        assert 'data-view="gateway"' in html
-        assert 'id="view-gateway"' in html
-        assert "网关配置" in html
-        assert 'id="gateway-caller-form"' in html
-        assert 'id="gateway-token-form"' in html
-        assert 'id="gateway-usage-model"' in html
-        assert 'id="gateway-usage-caller"' in html
-        assert 'id="gateway-usage-token"' in html
-        assert 'data-copy-publication="gateway-key-secret"' in html
+        for marker in (
+            'data-view="gateway"',
+            'id="view-gateway"',
+            "网关配置",
+            'id="gateway-caller-form"',
+            'id="gateway-token-form"',
+            'id="gateway-usage-model"',
+            'data-copy-publication="gateway-key-secret"',
+        ):
+            assert marker not in html
         script = client.get("/static/app.js").text
-        assert "data-gateway-delete-consumer" in script
-        assert "token.model_ids" in script
+        assert "data-gateway-delete-consumer" not in script
+        assert "loadGateway(" not in script
         for fragment in (
             'document.addEventListener("click"',
             'event.target.closest("[data-copy-publication]")',

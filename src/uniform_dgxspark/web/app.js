@@ -3,7 +3,7 @@ import { FitAddon } from "/static/vendor/node_modules/@xterm/addon-fit/lib/addon
 import html2canvas from "/static/vendor/node_modules/html2canvas/dist/html2canvas.esm.js";
 import { initFeishuNotifications, loadFeishuNotifications } from "/static/feishu.js?v=20261027-feishu-pkce";
 
-const state = { deployments: [], aiServices: [], aiServicesApiAvailable: null, aiServiceStopping: new Set(), images: [], localModels: [], benchmarks: [], aiBenchmarkSessions: [], arenaRuns: [], arenaExpandedIds: new Set(), arenaToggledIds: new Set(), arenaBaselineDetail: null, arenaBaselinePresetKey: null, arenaRuntimeProfile: null, arenaRuntimeTargetKey: null, arenaLogId: null, arenaLogTimer: null, accuracyRuns: [], accuracyAvailable: null, accuracyLoading: false, accuracyDetailId: null, accuracyDetailTimer: null, selectedId: null, eventSource: null, aiSessions: [], aiProviders: [], aiSessionId: null, aiSessionTaskType: null, aiSessionCategory: null, aiSessionFocusId: null, aiSessionPending: null, aiSessionSubmitting: false, aiSessionResuming: false, aiDeployTarget: null, aiOneClickPending: false, aiOneClickRequest: null, terminal: null, fitAddon: null, terminalSocket: null, aiAutoResume: null, aiChatView: localStorage.getItem("uniform-ai-chat-view") === "terminal" ? "terminal" : "chat", aiConversation: null, aiConversationTimer: null, aiConversationLoading: false, aiConversationSignature: "", aiChatLocalMessages: [], aiChatSending: false, serviceLogSocket: null, serviceLogSource: null, serviceLogResourceId: null, serviceLogPollTimer: null, serviceLogLastUpdate: 0, serviceLogs: "", serviceTelemetry: null, serviceLogsPaused: false, servicePublicationTarget: null, servicePublicationStatus: null, servicePublicationGeneration: 0, servicePublicationBusy: false, servicePublicationFocus: "lan", gatewayModels: [], gatewayCallers: [], gatewayUsage: null, gatewayGlobalSummary: null, gatewayLoading: false, gatewayLastLoaded: 0, gatewayFormSignature: "" };
+const state = { deployments: [], aiServices: [], aiServicesApiAvailable: null, aiServiceStopping: new Set(), images: [], localModels: [], benchmarks: [], aiBenchmarkSessions: [], arenaRuns: [], arenaExpandedIds: new Set(), arenaToggledIds: new Set(), arenaBaselineDetail: null, arenaBaselinePresetKey: null, arenaRuntimeProfile: null, arenaRuntimeTargetKey: null, arenaLogId: null, arenaLogTimer: null, accuracyRuns: [], accuracyAvailable: null, accuracyLoading: false, accuracyDetailId: null, accuracyDetailTimer: null, selectedId: null, eventSource: null, aiSessions: [], aiProviders: [], aiSessionId: null, aiSessionTaskType: null, aiSessionCategory: null, aiSessionFocusId: null, aiSessionPending: null, aiSessionSubmitting: false, aiSessionResuming: false, aiDeployTarget: null, aiOneClickPending: false, aiOneClickRequest: null, terminal: null, fitAddon: null, terminalSocket: null, aiAutoResume: null, aiChatView: localStorage.getItem("uniform-ai-chat-view") === "terminal" ? "terminal" : "chat", aiConversation: null, aiConversationTimer: null, aiConversationLoading: false, aiConversationSignature: "", aiChatLocalMessages: [], aiChatSending: false, serviceLogSocket: null, serviceLogSource: null, serviceLogResourceId: null, serviceLogPollTimer: null, serviceLogLastUpdate: 0, serviceLogs: "", serviceTelemetry: null, serviceLogsPaused: false, servicePublicationTarget: null, servicePublicationStatus: null, servicePublicationGeneration: 0, servicePublicationBusy: false, servicePublicationFocus: "lan" };
 const statusLabels = {
   queued: "等待中", preflight: "环境检查", downloading_model: "下载模型",
   pulling_image: "准备镜像", starting_container: "启动容器", loading_model: "加载模型",
@@ -405,279 +405,6 @@ async function refreshDetail() {
   } catch (error) { toast(error.message, true); }
 }
 
-function gatewayRequest(action, path, options={}) {
-  return api(path, {...options, headers:{"X-Uniform-Action":action, ...(options.headers||{})}});
-}
-
-function gatewayNumber(value) {
-  return new Intl.NumberFormat("zh-CN").format(Number(value||0));
-}
-
-function gatewayDate(value) {
-  if (!value) return "—";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
-}
-
-function gatewayModelName(modelId) {
-  const model = state.gatewayModels.find(item => item.model_id === modelId)
-    || state.gatewayModels.find(item => item.publication_id === modelId);
-  return model?.display_name || modelId || "未命名模型";
-}
-
-function gatewayTokenState(token) {
-  if (!token.enabled) return {label:"已停用", className:"stopped"};
-  if (token.expires_at && new Date(token.expires_at).getTime() <= Date.now()) return {label:"已过期", className:"failed"};
-  if (token.token_limit != null && token.used_tokens >= token.token_limit) return {label:"额度耗尽", className:"failed"};
-  return {label:"可用", className:"running"};
-}
-
-function renderGatewaySummary() {
-  const tokens = state.gatewayCallers.flatMap(caller => caller.tokens || []);
-  const activeKeys = tokens.filter(token => gatewayTokenState(token).className === "running").length;
-  document.querySelector("#gateway-model-count").textContent = gatewayNumber(state.gatewayModels.length);
-  document.querySelector("#gateway-caller-count").textContent = gatewayNumber(state.gatewayCallers.length);
-  document.querySelector("#gateway-key-count").textContent = gatewayNumber(activeKeys);
-  const usage = state.gatewayGlobalSummary;
-  document.querySelector("#gateway-request-count").textContent = gatewayNumber(usage?.requests || 0);
-  document.querySelector("#gateway-token-summary").textContent = usage
-    ? `${gatewayNumber(usage.total_tokens)} tokens · ${gatewayNumber(usage.unknown_usage)} 条未返回 usage`
-    : "尚无用量记录";
-}
-
-function renderGatewayModels() {
-  const list = document.querySelector("#gateway-models");
-  const empty = document.querySelector("#gateway-models-empty");
-  const tokens = state.gatewayCallers.flatMap(caller => caller.tokens || []);
-  empty.hidden = state.gatewayModels.length > 0;
-  list.innerHTML = state.gatewayModels.map(model => {
-    const keyCount = tokens.filter(token => token.publication_ids?.includes(model.publication_id)).length;
-    const activeKeys = tokens.filter(token => token.publication_ids?.includes(model.publication_id) && gatewayTokenState(token).className === "running").length;
-    const status = model.service_running ? "运行中" : "服务不可用";
-    const statusClass = model.service_running ? "running" : "failed";
-    const external = model.external_url ? `<label>外网 Base URL<div class="publication-copy-row"><input id="gateway-external-${escapeHtml(model.publication_id)}" value="${escapeHtml(model.external_url)}" readonly spellcheck="false"><button type="button" class="secondary" data-copy-publication="gateway-external-${escapeHtml(model.publication_id)}" data-copy-label="外网 Base URL">复制</button></div></label>` : "";
-    const legacy = model.key_hint ? `<div class="gateway-legacy-key"><div><strong>历史共享 Key 仍可用</strong><code>${escapeHtml(model.key_hint)}</code><small>建议确认独立 Key 可用后停用它。</small></div><button type="button" class="danger" data-gateway-disable-legacy="${escapeHtml(model.publication_id)}">停用共享 Key</button></div>` : `<span class="gateway-pill">仅允许独立 Key</span>`;
-    return `<article class="gateway-model-card"><div class="gateway-model-head"><div><p class="eyebrow">${escapeHtml(model.target_type === "ai_session" ? "AI DEPLOYED SERVICE" : "MANAGED DEPLOYMENT")}</p><h3>${escapeHtml(model.display_name)}</h3><small>${escapeHtml(model.target_id)}</small></div><span class="status ${statusClass}">${status}</span></div><div class="gateway-model-meta"><span>${gatewayNumber(keyCount)} 把 Key</span><span>${gatewayNumber(activeKeys)} 把可用</span><span>网关${model.gateway_running ? "运行中" : "未运行"}</span></div><label>局域网 Base URL<div class="publication-copy-row"><input id="gateway-base-${escapeHtml(model.publication_id)}" value="${escapeHtml(model.base_url || "")}" readonly spellcheck="false"><button type="button" class="secondary" data-copy-publication="gateway-base-${escapeHtml(model.publication_id)}" data-copy-label="Base URL">复制</button></div></label>${external}${legacy}</article>`;
-  }).join("");
-}
-
-function renderGatewayCallers() {
-  const list = document.querySelector("#gateway-caller-list");
-  if (!state.gatewayCallers.length) {
-    list.innerHTML = '<div class="empty-state compact"><div class="empty-icon">○</div><h3>还没有 API 调用方</h3><p>先新增同事、团队或业务系统，再签发独立 Key。</p></div>';
-    return;
-  }
-  list.innerHTML = state.gatewayCallers.map(caller => {
-    const tokens = caller.tokens || [];
-    const rows = tokens.length ? tokens.map(token => {
-      const stateInfo = gatewayTokenState(token);
-      const models = (token.model_ids?.length ? token.model_ids : token.publication_ids).map(gatewayModelName).join("、") || "未授权模型";
-      const quota = token.token_limit == null ? `${gatewayNumber(token.used_tokens)} / 不限额` : `${gatewayNumber(token.used_tokens)} / ${gatewayNumber(token.token_limit)}`;
-      return `<div class="gateway-token-row"><div><strong>${escapeHtml(token.name)}</strong><code>${escapeHtml(token.key_hint)}</code><small>${escapeHtml(models)}</small></div><div><span class="gateway-token-label">Token 用量</span><strong>${quota}</strong><small>${token.expires_at ? `到期：${escapeHtml(gatewayDate(token.expires_at))}` : "长期有效"}</small></div><div><span class="gateway-token-label">最近使用</span><strong>${escapeHtml(gatewayDate(token.last_used_at))}</strong><small>创建：${escapeHtml(gatewayDate(token.created_at))}</small></div><span class="status ${stateInfo.className}">${stateInfo.label}</span><button type="button" class="danger" data-gateway-revoke-token="${escapeHtml(token.token_id)}" ${token.enabled ? "" : "disabled"}>撤销</button></div>`;
-    }).join("") : '<div class="gateway-caller-empty">还没有 Key。右侧表单可为该调用方签发。</div>';
-    return `<article class="gateway-caller-card"><div class="gateway-caller-head"><div><strong>${escapeHtml(caller.name)}</strong><small>${escapeHtml(caller.note || "无备注")}</small></div><div><span class="status ${caller.enabled ? "running" : "stopped"}">${caller.enabled ? "启用" : "已停用"}</span>${caller.enabled ? `<button type="button" class="gateway-text-danger" data-gateway-disable-consumer="${escapeHtml(caller.consumer_id)}">停用调用方</button>` : ""}<button type="button" class="gateway-text-danger" data-gateway-delete-consumer="${escapeHtml(caller.consumer_id)}">删除</button></div></div><div class="gateway-token-list">${rows}</div></article>`;
-  }).join("");
-}
-
-function renderGatewayFormOptions(force=false) {
-  const signature = JSON.stringify({
-    models: state.gatewayModels.map(model => [model.publication_id, model.display_name]),
-    callers: state.gatewayCallers.map(caller => [caller.consumer_id, caller.name, caller.enabled]),
-    tokens: state.gatewayCallers.flatMap(caller => (caller.tokens || []).map(token => [token.token_id, token.name, token.key_hint, token.publication_ids, token.model_ids])),
-  });
-  if (!force && signature === state.gatewayFormSignature) return;
-  state.gatewayFormSignature = signature;
-  const callerSelect = document.querySelector("#gateway-token-caller");
-  const previousCaller = callerSelect.value;
-  callerSelect.innerHTML = state.gatewayCallers.length
-    ? state.gatewayCallers.map(caller => `<option value="${escapeHtml(caller.consumer_id)}">${escapeHtml(caller.name)}</option>`).join("")
-    : '<option value="">先新增调用方</option>';
-  if (state.gatewayCallers.some(caller => caller.consumer_id === previousCaller)) callerSelect.value = previousCaller;
-  callerSelect.disabled = !state.gatewayCallers.length;
-  const container = document.querySelector("#gateway-token-models");
-  const previousModels = new Set([...container.querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value));
-  const firstRender = !container.querySelector('input[type="checkbox"]');
-  container.innerHTML = state.gatewayModels.length
-    ? state.gatewayModels.map(model => `<label class="gateway-model-check"><input type="checkbox" value="${escapeHtml(model.publication_id)}" ${firstRender || previousModels.has(model.publication_id) ? "checked" : ""}><span><strong>${escapeHtml(model.display_name)}</strong><small>${escapeHtml(model.target_id)}</small></span></label>`).join("")
-    : "<small>先从部署中心发布模型。</small>";
-  const usageModel = document.querySelector("#gateway-usage-model");
-  const usageCaller = document.querySelector("#gateway-usage-caller");
-  const usageToken = document.querySelector("#gateway-usage-token");
-  const currentModel = usageModel.value;
-  const currentCaller = usageCaller.value;
-  const currentToken = usageToken.value;
-  usageModel.innerHTML = '<option value="">全部模型</option>' + state.gatewayModels.map(model => `<option value="${escapeHtml(model.publication_id)}">${escapeHtml(model.display_name)}</option>`).join("");
-  usageCaller.innerHTML = '<option value="">全部调用方</option>' + state.gatewayCallers.map(caller => `<option value="${escapeHtml(caller.consumer_id)}">${escapeHtml(caller.name)}</option>`).join("");
-  const tokens = state.gatewayCallers.flatMap(caller => (caller.tokens || []).map(token => ({...token, caller: caller.name})));
-  usageToken.innerHTML = '<option value="">全部 Key</option>' + tokens.map(token => `<option value="${escapeHtml(token.token_id)}">${escapeHtml(token.caller)} / ${escapeHtml(token.name)} · ${escapeHtml(token.key_hint)}</option>`).join("");
-  for (const [element, value] of [[usageModel,currentModel],[usageCaller,currentCaller],[usageToken,currentToken]]) {
-    if ([...element.options].some(option => option.value === value)) element.value = value;
-  }
-}
-
-function renderGatewayUsage() {
-  const usage = state.gatewayUsage;
-  const list = document.querySelector("#gateway-usage-list");
-  const empty = document.querySelector("#gateway-usage-empty");
-  const items = usage?.items || [];
-  empty.hidden = items.length > 0;
-  document.querySelector("#gateway-usage-meta").textContent = usage
-    ? `共 ${gatewayNumber(usage.total)} 条记录，当前显示最近 ${gatewayNumber(items.length)} 条 · 输入 ${gatewayNumber(usage.summary.prompt_tokens)} · 输出 ${gatewayNumber(usage.summary.completion_tokens)} · 合计 ${gatewayNumber(usage.summary.total_tokens)} tokens`
-    : "正在读取用量…";
-  list.innerHTML = items.map(item => {
-    const statusClass = item.status_code >= 500 ? "failed" : item.status_code >= 400 ? "unhealthy" : "running";
-    const tokenText = item.total_tokens == null ? "未返回" : `${gatewayNumber(item.total_tokens)}${item.usage_source === "unavailable" ? "（估算缺失）" : ""}`;
-    return `<div class="gateway-usage-row"><span title="${escapeHtml(item.created_at)}">${escapeHtml(gatewayDate(item.created_at))}</span><span title="${escapeHtml(item.publication_id || "")}">${escapeHtml(item.publication_label || item.model || "—")}</span><span>${escapeHtml(item.consumer_name)}</span><span title="${escapeHtml(item.token_name)}">${escapeHtml(item.token_name)}</span><span><code>${escapeHtml(item.method)} ${escapeHtml(item.endpoint)}</code></span><span><span class="status ${statusClass}">${gatewayNumber(item.status_code)}</span></span><span>${tokenText}</span><span>${gatewayNumber(item.latency_ms)} ms</span></div>`;
-  }).join("");
-}
-
-async function loadGatewayUsage(silent=false) {
-  const parameters = new URLSearchParams();
-  for (const [key, selector] of [["publication_id","#gateway-usage-model"],["consumer_id","#gateway-usage-caller"],["token_id","#gateway-usage-token"]]) {
-    const value = document.querySelector(selector).value;
-    if (value) parameters.set(key, value);
-  }
-  parameters.set("limit", "100");
-  try {
-    state.gatewayUsage = await api(`/api/v1/gateway/usage?${parameters}`);
-    renderGatewaySummary();
-    renderGatewayUsage();
-  } catch (error) {
-    if (!silent) toast(`读取网关用量失败：${error.message}`, true);
-  }
-}
-
-async function loadGateway({silent=false}={}) {
-  if (state.gatewayLoading) return;
-  state.gatewayLoading = true;
-  try {
-    const [models, callers, globalUsage] = await Promise.all([api("/api/v1/gateway/models"), api("/api/v1/gateway/callers"), api("/api/v1/gateway/usage?limit=1")]);
-    state.gatewayModels = models;
-    state.gatewayCallers = callers.items;
-    state.gatewayGlobalSummary = globalUsage.summary;
-    state.gatewayLastLoaded = Date.now();
-    renderGatewayModels();
-    renderGatewayCallers();
-    renderGatewayFormOptions();
-    await loadGatewayUsage(silent);
-    renderGatewaySummary();
-  } catch (error) {
-    if (!silent) toast(`读取网关配置失败：${error.message}`, true);
-  } finally {
-    state.gatewayLoading = false;
-  }
-}
-
-function showGatewaySecret(secret, token) {
-  document.querySelector("#gateway-key-secret").value = secret;
-  document.querySelector("#gateway-key-meta").textContent = `${token.name} · ${(token.model_ids?.length ? token.model_ids : token.publication_ids).map(gatewayModelName).join("、")} · ${token.token_limit == null ? "不限额" : `额度 ${gatewayNumber(token.token_limit)} tokens`}`;
-  document.querySelector("#gateway-key-dialog").showModal();
-}
-
-document.querySelectorAll("[data-gateway-key-close]").forEach(button => button.addEventListener("click", () => document.querySelector("#gateway-key-dialog").close()));
-document.querySelector("#refresh-gateway").addEventListener("click", () => loadGateway());
-document.querySelector("#refresh-gateway-usage").addEventListener("click", () => loadGatewayUsage());
-document.querySelector("#clear-gateway-usage-filters").addEventListener("click", () => {
-  document.querySelector("#gateway-usage-model").value = "";
-  document.querySelector("#gateway-usage-caller").value = "";
-  document.querySelector("#gateway-usage-token").value = "";
-  loadGatewayUsage();
-});
-for (const selector of ["#gateway-usage-model","#gateway-usage-caller","#gateway-usage-token"]) {
-  document.querySelector(selector).addEventListener("change", () => loadGatewayUsage());
-}
-
-document.querySelector("#gateway-caller-form").addEventListener("submit", async event => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const error = document.querySelector("#gateway-caller-error");
-  error.textContent = "";
-  const button = form.querySelector('button[type="submit"]');
-  button.disabled = true;
-  try {
-    await gatewayRequest("gateway-config", "/api/v1/gateway/callers", {method:"POST", body:JSON.stringify({name:form.elements.name.value.trim(), note:form.elements.note.value.trim() || null})});
-    form.reset();
-    toast("已新增 API 调用方");
-    renderGatewayFormOptions(true);
-    await loadGateway();
-  } catch (failure) {
-    error.textContent = failure.message;
-  } finally {
-    button.disabled = false;
-  }
-});
-
-document.querySelector("#gateway-token-form").addEventListener("submit", async event => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const error = document.querySelector("#gateway-token-error");
-  error.textContent = "";
-  const publicationIds = [...document.querySelectorAll('#gateway-token-models input[type="checkbox"]:checked')].map(input => input.value);
-  if (!publicationIds.length) {
-    error.textContent = "至少选择一个允许访问的模型。";
-    return;
-  }
-  const button = form.querySelector('button[type="submit"]');
-  button.disabled = true;
-  try {
-    const expiresValue = form.elements.expires_at.value;
-    const payload = {
-      name: form.elements.name.value.trim(),
-      publication_ids: publicationIds,
-      token_limit: form.elements.token_limit.value ? Number(form.elements.token_limit.value) : null,
-      expires_at: expiresValue ? new Date(expiresValue).toISOString() : null,
-    };
-    const token = await gatewayRequest("gateway-config", `/api/v1/gateway/callers/${encodeURIComponent(form.elements.consumer_id.value)}/tokens`, {method:"POST", body:JSON.stringify(payload)});
-    showGatewaySecret(token.api_key, token);
-    form.reset();
-    await loadGateway();
-    toast("独立 API Key 已生成，请立即保存");
-  } catch (failure) {
-    error.textContent = failure.message;
-  } finally {
-    button.disabled = false;
-  }
-});
-
-document.querySelector("#gateway-caller-list").addEventListener("click", async event => {
-  const revokeToken = event.target.closest("[data-gateway-revoke-token]");
-  const disableCaller = event.target.closest("[data-gateway-disable-consumer]");
-  const deleteCaller = event.target.closest("[data-gateway-delete-consumer]");
-  try {
-    if (revokeToken) {
-      if (!window.confirm("撤销后该 Key 会立即失效，其他 Key 不受影响。确定继续吗？")) return;
-      await gatewayRequest("gateway-config", `/api/v1/gateway/tokens/${encodeURIComponent(revokeToken.dataset.gatewayRevokeToken)}`, {method:"DELETE"});
-      toast("API Key 已撤销");
-      await loadGateway();
-    } else if (disableCaller) {
-      if (!window.confirm("停用调用方会同时停用它的全部 Key。确定继续吗？")) return;
-      await gatewayRequest("gateway-config", `/api/v1/gateway/callers/${encodeURIComponent(disableCaller.dataset.gatewayDisableConsumer)}`, {method:"DELETE"});
-      toast("API 调用方已停用");
-      await loadGateway();
-    } else if (deleteCaller) {
-      if (!window.confirm("删除后调用方及其全部 Key 会永久移除，历史用量记录仍会保留。确定继续吗？")) return;
-      await gatewayRequest("gateway-config", `/api/v1/gateway/callers/${encodeURIComponent(deleteCaller.dataset.gatewayDeleteConsumer)}/permanent`, {method:"DELETE"});
-      toast("API 调用方已删除");
-      await loadGateway();
-    }
-  } catch (error) {
-    toast(error.message, true);
-  }
-});
-
-document.querySelector("#gateway-models").addEventListener("click", async event => {
-  const button = event.target.closest("[data-gateway-disable-legacy]");
-  if (!button) return;
-  if (!window.confirm("停用后，旧的共享 API Key 会立即失效，独立 Key 不受影响。确定继续吗？")) return;
-  try {
-    await gatewayRequest("gateway-config", `/api/v1/gateway/models/${encodeURIComponent(button.dataset.gatewayDisableLegacy)}/legacy-key`, {method:"DELETE"});
-    toast("历史共享 Key 已停用");
-    await loadGateway();
-  } catch (error) {
-    toast(error.message, true);
-  }
-});
-
 document.querySelectorAll(".nav-item").forEach(button => button.addEventListener("click", () => {
   document.querySelectorAll(".nav-item").forEach(x => x.classList.toggle("active", x === button));
   document.querySelectorAll(".view").forEach(x => x.classList.remove("active"));
@@ -686,7 +413,6 @@ document.querySelectorAll(".nav-item").forEach(button => button.addEventListener
   document.querySelector("#open-deploy").style.display = button.dataset.view === "deployments" ? "block" : "none";
   if (button.dataset.view === "system") loadMetrics();
   if (button.dataset.view === "catalog") { searchCatalog(); loadCatalogStatus(); loadLocalModels(); loadImages(); }
-  if (button.dataset.view === "gateway") loadGateway();
   if (button.dataset.view === "arena") { activatePerformancePanel("benchmark"); loadAiCenter(); }
   if (button.dataset.view === "accuracy") { populateAccuracyTargets(); loadAccuracyRuns(); loadAccuracyDatasetCatalog(); }
   if (button.dataset.view === "ai-sessions") { mountAiWorkspace(state.aiSessionCategory||"deployment"); loadAiCenter(); }
@@ -3210,12 +2936,10 @@ setInterval(() => {
   const deploymentView=document.querySelector("#view-deployments").classList.contains("active");
   const performanceView=document.querySelector("#view-arena").classList.contains("active");
   const accuracyView=document.querySelector("#view-accuracy").classList.contains("active");
-  const gatewayView=document.querySelector("#view-gateway").classList.contains("active");
   if(deploymentView||performanceView||accuracyView) loadAiServices();
   if (document.querySelector("#view-system").classList.contains("active")) loadMetrics();
   if(performanceView) { if(document.querySelector("#benchmark-method-arena").classList.contains("active")) loadArenaRuns(); if(document.querySelector("#benchmark-method-custom").classList.contains("active")) loadBenchmarks(); }
   if(accuracyView) loadAccuracyRuns(true);
-  if(gatewayView && Date.now()-state.gatewayLastLoaded>6000) loadGateway({silent:true});
   if (state.selectedId) refreshDetail();
   if (state.aiSessionId) { loadAiResult(); loadAutoResume(); }
 }, 3000);
