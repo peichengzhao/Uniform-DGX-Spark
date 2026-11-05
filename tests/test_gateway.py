@@ -9,6 +9,10 @@ from fastapi.testclient import TestClient
 from uniform_dgxspark.config import Settings
 from uniform_dgxspark.main import create_app
 from uniform_dgxspark.schemas import DeploymentCreate, DeploymentParameters
+from uniform_dgxspark.services.publication import (
+    GatewayAdmissionController,
+    ServicePublicationManager,
+)
 from uniform_dgxspark.state import DeploymentStatus
 
 ACTION = {"X-Uniform-Action": "gateway-config"}
@@ -522,3 +526,118 @@ def test_gateway_configuration_page_is_removed_from_the_console(tmp_path: Path) 
             'document.execCommand("copy")',
         ):
             assert fragment in script
+
+
+def test_gateway_admission_limits_rate_and_concurrency() -> None:
+    controller = GatewayAdmissionController(
+        requests_per_minute=100,
+        tokens_per_minute=1000,
+        key_concurrency=1,
+        total_concurrency=10,
+    )
+
+    first, _ = controller.acquire("caller", 10)
+    assert first is not None
+    blocked_by_concurrency, retry_after = controller.acquire("caller", 10)
+    assert blocked_by_concurrency is None
+    assert retry_after == 1
+    controller.release(first, 4)
+    second, _ = controller.acquire("caller", 10)
+    assert second is not None
+    controller.release(second, 4)
+
+
+def test_gateway_quota_reservation_is_atomic(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as client:
+        runtime = client.app.state.runtime
+        runtime.is_running = lambda _target_id: True
+        deployment_id = _running_deployment(client)
+        publication = client.app.state.publication_store.enable(
+            "deployment",
+            deployment_id,
+            api_key_hash=hashlib.sha256(b"legacy").hexdigest(),
+            key_hint="legacy",
+        )
+        consumer_id = client.post(
+            "/api/v1/gateway/callers",
+            json={"name": "配额测试"},
+            headers=ACTION,
+        ).json()["consumer_id"]
+        token = client.post(
+            f"/api/v1/gateway/callers/{consumer_id}/tokens",
+            json={
+                "name": "并发 Key",
+                "publication_ids": [publication.publication_id],
+                "token_limit": 10,
+            },
+            headers=ACTION,
+        ).json()
+        store = client.app.state.gateway_store
+
+        assert store.reserve_tokens(token["token_id"], 8, strict=True) == 8
+        assert store.reserve_tokens(token["token_id"], 8, strict=True) is None
+        store.release_reserved_tokens(token["token_id"], 8)
+        assert store.reserve_tokens(token["token_id"], 8, strict=True) == 8
+        store.release_reserved_tokens(token["token_id"], 8)
+
+
+def test_gateway_usage_supports_responses_token_fields() -> None:
+    assert ServicePublicationManager._extract_usage(
+        b'{"usage":{"input_tokens":3,"output_tokens":4}}'
+    ) == (3, 4, 7)
+
+
+def test_gateway_records_estimated_usage_when_upstream_omits_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as client:
+        client.app.state.runtime.is_running = lambda _target_id: True
+        deployment_id = _running_deployment(client)
+        publication = client.app.state.publication_store.enable(
+            "deployment",
+            deployment_id,
+            api_key_hash=hashlib.sha256(b"legacy").hexdigest(),
+            key_hint="legacy",
+        )
+        consumer_id = client.post(
+            "/api/v1/gateway/callers",
+            json={"name": "估算用量"},
+            headers=ACTION,
+        ).json()["consumer_id"]
+        token = client.post(
+            f"/api/v1/gateway/callers/{consumer_id}/tokens",
+            json={
+                "name": "无 usage Key",
+                "publication_ids": [publication.publication_id],
+                "token_limit": 100,
+            },
+            headers=ACTION,
+        ).json()
+        captured: dict[str, object] = {}
+        monkeypatch.setattr(
+            "uniform_dgxspark.services.publication.httpx.AsyncClient",
+            lambda **_kwargs: _FakeAsyncClient(
+                captured, _JsonUpstream({"id": "no-usage", "choices": []})
+            ),
+        )
+
+        manager: ServicePublicationManager = client.app.state.publication_manager
+        with TestClient(manager.gateway_app) as gateway:
+            response = gateway.post(
+                f"/{publication.publication_id}/v1/chat/completions",
+                json={"model": "test-model", "messages": [], "max_tokens": 7},
+                headers={"Authorization": f"Bearer {token['api_key']}"},
+            )
+        assert response.status_code == 200
+
+        usage = client.get(
+            "/api/v1/gateway/usage", params={"token_id": token["token_id"]}
+        ).json()
+        assert usage["summary"]["total_tokens"] == 7
+        assert usage["items"][0]["usage_source"] == "estimated"
+        refreshed = client.get("/api/v1/gateway/callers").json()["items"][0]["tokens"][0]
+        assert refreshed["used_tokens"] == 7
+        assert refreshed["reserved_tokens"] == 0
+        assert refreshed["remaining_tokens"] == 93

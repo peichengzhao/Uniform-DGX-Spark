@@ -513,3 +513,4 @@ body.ui-editing #ui-editor-toolbar,body.ui-editing #ui-editor-toolbar *,body.ui-
 .detail-actions button { flex:0 0 auto; }
 @media (max-width:800px) { .drawer { width:100vw; padding:18px; }.drawer-head { top:-18px; margin:-18px -18px 15px; padding:16px 18px 13px; }.detail-fact-grid,.detail-metric-grid,.detail-benchmark-grid { grid-template-columns:1fr 1fr; }.detail-fact-wide { grid-column:1 / -1; }.detail-section-heading { flex-direction:column; }.detail-section-tools { width:100%; justify-content:space-between; } }
 @media (max-width:520px) { .detail-fact-grid,.detail-metric-grid,.detail-benchmark-grid { grid-template-columns:1fr; }.detail-fact-wide { grid-column:auto; } }
+.publication-health { display:block; margin:8px 0; color:var(--muted); font-size:11px; line-height:1.6; }

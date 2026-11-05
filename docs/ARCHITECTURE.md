@@ -70,26 +70,29 @@ Docker 服务的工件绑定完整容器 ID、镜像和名称；平台只有在�
 交回原 AI 会话，原会话不可用时再创建携带持久化备份和失败原因的新会话。
 
 模型发布与控制面分离。只有用户显式发布服务后，独立网关才监听局域网端口。发布记录负责
-公开模型、Base URL 和供上游渠道使用的共享发布 Key；渠道、最终用户 Token、模型范围、额度
-与用量由外部 New API 管理。Uniform 控制台不再提供“网关配置”页面，但 `/api/v1/gateway/*`
-以及后端既有的调用方、Token 和用量能力继续保留，供兼容场景与自动化使用。每把 Token 绑定
+公开模型、Base URL 和共享发布 Key；调用方、最终用户 Token、稳定模型范围、额度与用量由
+平台内置网关管理。Uniform 控制台不提供“网关配置”页面，但 `/api/v1/gateway/*` 提供完整的
+管理能力。每把 Token 绑定
 允许访问的稳定模型身份，而不是单次 publication ID，因此同一模型停止并重新部署后权限仍
 可复用；Token 还可设置总额度与过期时间。Token 明文只在创建时返回，SQLite 只保存 SHA-256、
 掩码和累计用量。网关按 publication ID 解析本机已登记且实时运行的目标，
 只允许有限 OpenAI 推理路径，不转发外部 Authorization 到上游，也不接受任意目标 URL。
 AI 自主服务发布前还会验证原始 API 端口只绑定 loopback，避免绕过网关鉴权；请求体采用有界
-流式读取，流式响应期间会复核 Token、调用方和发布状态。每次请求记录调用方、模型、端点、
-状态码、延迟及上游真实返回的 token usage；未返回 usage 时标记为不可用，不做伪造估算。
+流式读取，流式响应期间会复核 Token、调用方和发布状态。网关按 Key 执行请求数、token 数和
+并发窗口限制，并在转发前原子预占剩余额度，避免并发请求同时越过总额度。流式
+Chat/Completions 会自动请求最终 usage；每次请求记录调用方、模型、端点、状态码、延迟及
+上游真实返回的 token usage，未返回 usage 时按预占量记为估算值。
 旧共享发布 Key 在迁移期仍可作为兼容凭据，并可在每个发布上单独停用。调用方可软停用，也可
 永久删除；永久删除会级联移除其 Token，但请求用量审计记录保留。关闭最后一个发布后网关
 随即停止。
 
-外网访问不要求开放入站端口：平台按需启动一个受管 `cloudflared` Quick Tunnel，通过出站
-HTTPS 反向连接到 `127.0.0.1:18181`。该地址可作为外部 New API 的 OpenAI 兼容上游；New API
-负责向最终用户签发独立 Token，Uniform 网关只校验渠道上游凭据。公网请求仍经过同一
-publication ID、Bearer Key 校验和 OpenAI 路径白名单。外网入口与局域网入口可独立开关；
-撤销局域网发布会同时关闭对应外网入口。Quick Tunnel 域名是临时的，进程重启后会变化；
-固定域名应改用 Cloudflare Named Tunnel 和用户自有域名。
+外网访问不要求开放入站端口：平台按需启动一个受管 `cloudflared` Quick Tunnel 或配置了
+固定域名的 Named Tunnel，通过出站 HTTPS 反向连接到 `127.0.0.1:18181`。公网请求仍经过同一
+publication ID、Bearer Key 校验、调用方权限、限流、并发、额度和 OpenAI 路径白名单。外网
+入口与局域网入口可独立开关；撤销局域网发布会同时关闭对应外网入口。平台持续探测公网
+可达性，连续失败会重启隧道，启动失败使用指数退避。Quick Tunnel 域名是临时的，进程重启
+后会变化；固定域名应配置 Named Tunnel、`UNIFORM_CLOUDFLARED_TUNNEL_TOKEN` 和
+`UNIFORM_EXTERNAL_PUBLIC_HOST`，token 只通过子进程环境变量传递。
 
 系统监控的远端节点使用持久化的 SSH 连接配置，但采集结果不依赖固定 hostname、IP、网卡、
 RDMA 设备或容器名称。控制服务每次通过固定 Python 只读探针重新枚举实际资源，并并发刷新

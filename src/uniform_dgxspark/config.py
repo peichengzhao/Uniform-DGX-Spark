@@ -24,6 +24,7 @@ class Settings:
     deepseek_binary: str = "deepseek"
     deepseek_args: str = ""
     ai_sessions_enabled: bool = True
+    ai_full_access_enabled: bool = False
     ui_editing_enabled: bool = True
     ai_reference_max_bytes: int = 1_000_000
     benchmark_reference_dir: Path = Path(__file__).with_name("benchmark_reference")
@@ -39,9 +40,19 @@ class Settings:
     publication_advertise_host: str | None = None
     publication_request_timeout_seconds: int = 1800
     publication_control_hosts: tuple[str, ...] = ()
+    gateway_requests_per_minute: int = 60
+    gateway_tokens_per_minute: int = 120_000
+    gateway_key_concurrency: int = 4
+    gateway_total_concurrency: int = 16
+    gateway_quota_reservation_tokens: int = 1024
     external_access_enabled: bool = True
     cloudflared_binary: str = "cloudflared"
     external_access_start_timeout_seconds: float = 30.0
+    external_tunnel_token: str | None = None
+    external_public_host: str | None = None
+    external_access_health_interval_seconds: float = 15.0
+    external_access_health_timeout_seconds: float = 8.0
+    external_access_health_failure_threshold: int = 2
     startup_watchdog_seconds: float = 90.0
     arena_uvx_binary: str = "uvx"
     arena_uv_cache_dir: Path = field(default_factory=lambda: Path.home() / ".cache" / "uv")
@@ -79,6 +90,10 @@ class Settings:
             deepseek_args=os.getenv("UNIFORM_DEEPSEEK_ARGS", ""),
             ai_sessions_enabled=os.getenv("UNIFORM_AI_SESSIONS_ENABLED", "true").lower()
             not in {"0", "false", "no"},
+            ai_full_access_enabled=os.getenv(
+                "UNIFORM_AI_FULL_ACCESS_ENABLED", "false"
+            ).lower()
+            not in {"0", "false", "no"},
             ui_editing_enabled=os.getenv("UNIFORM_UI_EDITING_ENABLED", "true").lower()
             not in {"0", "false", "no"},
             ai_reference_max_bytes=int(os.getenv("UNIFORM_AI_REFERENCE_MAX_BYTES", "1000000")),
@@ -112,11 +127,37 @@ class Settings:
                 for host in os.getenv("UNIFORM_PUBLICATION_CONTROL_HOSTS", "").split(",")
                 if host.strip()
             ),
+            gateway_requests_per_minute=int(
+                os.getenv("UNIFORM_GATEWAY_REQUESTS_PER_MINUTE", "60")
+            ),
+            gateway_tokens_per_minute=int(
+                os.getenv("UNIFORM_GATEWAY_TOKENS_PER_MINUTE", "120000")
+            ),
+            gateway_key_concurrency=int(
+                os.getenv("UNIFORM_GATEWAY_KEY_CONCURRENCY", "4")
+            ),
+            gateway_total_concurrency=int(
+                os.getenv("UNIFORM_GATEWAY_TOTAL_CONCURRENCY", "16")
+            ),
+            gateway_quota_reservation_tokens=int(
+                os.getenv("UNIFORM_GATEWAY_QUOTA_RESERVATION_TOKENS", "1024")
+            ),
             external_access_enabled=os.getenv("UNIFORM_EXTERNAL_ACCESS_ENABLED", "true").lower()
             not in {"0", "false", "no"},
             cloudflared_binary=os.getenv("UNIFORM_CLOUDFLARED_BINARY", "cloudflared"),
             external_access_start_timeout_seconds=float(
                 os.getenv("UNIFORM_EXTERNAL_ACCESS_START_TIMEOUT_SECONDS", "30")
+            ),
+            external_tunnel_token=os.getenv("UNIFORM_CLOUDFLARED_TUNNEL_TOKEN") or None,
+            external_public_host=os.getenv("UNIFORM_EXTERNAL_PUBLIC_HOST") or None,
+            external_access_health_interval_seconds=float(
+                os.getenv("UNIFORM_EXTERNAL_ACCESS_HEALTH_INTERVAL_SECONDS", "15")
+            ),
+            external_access_health_timeout_seconds=float(
+                os.getenv("UNIFORM_EXTERNAL_ACCESS_HEALTH_TIMEOUT_SECONDS", "8")
+            ),
+            external_access_health_failure_threshold=int(
+                os.getenv("UNIFORM_EXTERNAL_ACCESS_HEALTH_FAILURE_THRESHOLD", "2")
             ),
             startup_watchdog_seconds=float(os.getenv("UNIFORM_STARTUP_WATCHDOG_SECONDS", "90")),
             arena_uvx_binary=os.getenv("UNIFORM_ARENA_UVX_BINARY", "uvx"),

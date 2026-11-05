@@ -138,6 +138,10 @@ class AISessionBusy(RuntimeError):
     pass
 
 
+class AIFullAccessDisabled(RuntimeError):
+    pass
+
+
 @dataclass(slots=True)
 class _ActiveSession:
     pid: int
@@ -347,6 +351,7 @@ class AITerminalManager:
         control_url: str = "http://127.0.0.1:18180",
         benchmark_reference_dir: Path | None = None,
         benchmark_history_csv: Path | None = None,
+        allow_full_access: bool = False,
     ) -> None:
         self.store = store
         self.sessions_dir = sessions_dir.resolve()
@@ -364,6 +369,7 @@ class AITerminalManager:
         self.benchmark_history_csv = (
             benchmark_history_csv.expanduser().resolve() if benchmark_history_csv else None
         )
+        self.allow_full_access = allow_full_access
         self._active: dict[str, _ActiveSession] = {}
         self._capabilities: dict[str, str] = {}
         self._auto_resume: dict[str, _AutoResumeState] = {}
@@ -430,8 +436,18 @@ class AITerminalManager:
         *,
         deployment_context: dict[str, Any] | None = None,
         deployment_logs: str | None = None,
+        trusted: bool = False,
     ) -> AISessionRead:
         with self._create_lock:
+            if (
+                request.execution_mode == "full_access"
+                and not self.allow_full_access
+                and not trusted
+            ):
+                raise AIFullAccessDisabled(
+                    "full host access is disabled for interactive AI sessions; "
+                    "set UNIFORM_AI_FULL_ACCESS_ENABLED=true only on a trusted host"
+                )
             if request.client_request_id:
                 try:
                     return self.store.get_by_client_request_id(request.client_request_id)
@@ -481,6 +497,13 @@ class AITerminalManager:
             display_name=display_name,
             target_model_id=target_model_id,
         )
+        if request.execution_mode == "full_access":
+            self.store.add_audit(
+                session_id,
+                "full_access_granted",
+                "Interactive AI session started with full host access",
+                {"provider": request.provider, "task_type": request.task_type},
+            )
         try:
             capability_token = (
                 secrets.token_urlsafe(32)
@@ -866,6 +889,16 @@ class AITerminalManager:
                 if session.status in {"starting", "running"}:
                     return session
                 raise AISessionBusy("AI session is still stopping; retry shortly")
+            if (
+                session.execution_mode == "full_access"
+                and not self.allow_full_access
+                and session.task_type != "service_stop"
+            ):
+                raise AIFullAccessDisabled(
+                    "this session was created with full host access, but that mode "
+                    "is now disabled; enable UNIFORM_AI_FULL_ACCESS_ENABLED only on "
+                    "a trusted host or create a new scoped session"
+                )
 
             executable: str | None = None
             if session.provider == "dsh":

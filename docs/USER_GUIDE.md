@@ -174,39 +174,21 @@ Base URL: http://<局域网-IP>:18181/<publication-id>/v1
 API Key:  udgs_...
 ```
 
-这里的发布 Key 是给上游渠道使用的共享凭据，只应保存在 New API 的渠道配置中，不建议直接
-发给多人使用。Uniform 控制台不再内置“网关配置”页面；调用方、独立 API Key、额度和用量
-现在统一在 New API 控制台管理。网关只开放模型列表、Chat/Completions、Embeddings 和
-Responses 等白名单推理端点，不会代理健康检查、指标或任意本机 URL。关闭发布会立即拒绝新
-请求，并在流式响应的下一次数据检查时终止旧 Key；最后一个发布关闭后网关停止监听。为避免
-绕过鉴权，AI 自主服务只有在原始 API 端口仅监听 loopback 时才能发布；若旧部署绑定了
-`0.0.0.0`，请先重新部署为 `127.0.0.1`。
+这里的发布 Key 是首次连通网关的共享凭据，不建议直接发给多人长期使用。平台内置调用方、
+独立 API Key、稳定模型范围、总额度、过期时间和请求用量记录；控制台不展示“网关配置”
+页面，管理能力通过 `/api/v1/gateway/*` 提供。网关只开放模型列表、Chat/Completions、
+Embeddings 和 Responses 等白名单推理端点，不会代理健康检查、指标或任意本机 URL。关闭
+发布会立即拒绝新请求，并在流式响应的下一次数据检查时终止旧 Key；最后一个发布关闭后网关
+停止监听。为避免绕过鉴权，AI 自主服务只有在原始 API 端口仅监听 loopback 时才能发布；若旧
+部署绑定了 `0.0.0.0`，请先重新部署为 `127.0.0.1`。
 
-### 通过 New API 分配独立 API Key
+网关默认对每把 Key 限制每分钟 60 次请求、每分钟 120000 token 和 4 个并发请求，并对全部
+Key 限制 16 个并发请求。带 `max_tokens`、`max_completion_tokens` 或 `max_output_tokens`
+的请求会在转发前原子预占额度，完成后按上游真实 usage 结算；流式 Chat/Completions 会自动
+请求最终 usage。上游没有返回 usage 时按预占量记为估算值，避免额度被绕过。
 
-1. 先在目标模型卡片上完成“发布到局域网”，复制平台显示的 Base URL 和发布 Key。
-2. 在 New API 管理后台添加一个 OpenAI 兼容渠道，上游 Base URL 填 Uniform 的发布地址，
-   渠道 Key 填共享发布 Key，并将该模型加入渠道可用模型。
-3. 为每位同事、团队或业务系统签发独立的 New API Token，并按需限制模型范围、额度和有效期。
-4. 使用者调用 New API 的 Base URL 和各自 Token，不再共享 Uniform 发布 Key。
-5. 在 New API 的日志、令牌或用量页面按模型、用户和 Token 查看调用记录与配额消耗。
-
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="https://<New-API-地址>/v1",
-    api_key="sk-NewAPI调用方Token",
-)
-```
-
-New API 负责最终用户的 Token、模型范围、额度和用量。Uniform 的后端鉴权网关仍保留既有
-调用方、Key 与用量 API，供自动化或兼容场景使用，但控制台不再展示对应管理页。共享发布 Key
-只作为 New API 渠道的上游凭据；如果该渠道正在使用它，请不要在模型卡片上点击“停用共享
-Key”，否则 New API 渠道会立即失去访问权限。
-
-完成局域网发布后，发布窗口会显示“外网访问”区域。点击“开启外网访问”后，平台启动受管的
-Cloudflare Quick Tunnel，并给出类似下面的 HTTPS 地址：
+完成局域网发布后，发布窗口会显示“外网访问”区域。未配置固定 Tunnel 时，点击“开启外网
+访问”会启动受管的 Cloudflare Quick Tunnel，并给出类似下面的 HTTPS 地址：
 
 ```text
 Base URL: https://<随机名称>.trycloudflare.com/<publication-id>/v1
@@ -214,14 +196,18 @@ API Key:  udgs_共享发布Key
 ```
 
 外网流量从 Cloudflare 经出站 HTTPS 隧道进入本机 `127.0.0.1:18181`，不要求路由器开放入站
-端口，也不会直接暴露模型监听端口。当 New API 部署在另一台机器或公网环境时，可以把该
-HTTPS 地址配置为 New API 渠道的上游；最终用户仍只使用 New API 签发的 Token。外网入口仍
-执行相同的 Bearer Key 校验和 OpenAI 路径白名单。可在发布窗口中独立关闭外网入口；关闭
-局域网发布会同时关闭对应外网入口，并立即停止该模型的全部代理请求。
+端口，也不会直接暴露模型监听端口。外网入口仍执行相同的 Bearer Key 校验、调用方权限、
+限流、并发和额度检查以及 OpenAI 路径白名单。可在发布窗口中独立关闭外网入口；关闭局域网
+发布会同时关闭对应外网入口，并立即停止该模型的全部代理请求。
 
-Quick Tunnel 地址由 Cloudflare 临时分配，`cloudflared` 或平台重启后会变化。长期生产入口应
-使用 Cloudflare Named Tunnel、固定域名和访问策略。平台默认查找 PATH 中的 `cloudflared`，
-也会查找 `~/.local/bin/cloudflared` 和项目目录的 `.runtime/bin/cloudflared`。
+Quick Tunnel 地址由 Cloudflare 临时分配，`cloudflared` 或平台重启后会变化。长期生产入口
+应使用 Cloudflare Named Tunnel、固定域名和访问策略：在 Cloudflare 控制台创建 Tunnel，
+把自有域名的服务指向 `http://127.0.0.1:18181`，然后为平台服务设置
+`UNIFORM_CLOUDFLARED_TUNNEL_TOKEN` 和 `UNIFORM_EXTERNAL_PUBLIC_HOST`。平台通过环境变量
+把 Tunnel token 交给 `cloudflared`，不会把 token 放入进程命令行。平台默认查找 PATH 中的
+`cloudflared`，也会查找 `~/.local/bin/cloudflared` 和项目目录的 `.runtime/bin/cloudflared`。
+外网地址默认每 15 秒探测一次；连续 2 次失败会重启 `cloudflared`，连续启动失败采用最长 60
+秒的指数退避，重连次数、最近健康时间和下次重试时间会显示在发布窗口。
 
 局域网入口仍是明文 HTTP，适合可信内网；外网调用应只使用上述 HTTPS 地址。如果机器有多个
 网卡，可通过下面的环境变量指定局域网 Base URL 中显示的主机名或 IP。
@@ -241,7 +227,17 @@ Quick Tunnel 地址由 Cloudflare 临时分配，`cloudflared` 或平台重启�
 | `UNIFORM_PUBLICATION_CONTROL_HOSTS` | 自动探测 | 允许执行发布管理操作的额外 Host，逗号分隔 |
 | `UNIFORM_EXTERNAL_ACCESS_ENABLED` | `true` | 是否允许创建 Cloudflare 外网入口 |
 | `UNIFORM_CLOUDFLARED_BINARY` | `cloudflared` | `cloudflared` 可执行文件或绝对路径 |
-| `UNIFORM_EXTERNAL_ACCESS_START_TIMEOUT_SECONDS` | `30` | 等待 Quick Tunnel URL 的超时 |
+| `UNIFORM_EXTERNAL_ACCESS_START_TIMEOUT_SECONDS` | `30` | 等待 Tunnel 就绪的超时 |
+| `UNIFORM_CLOUDFLARED_TUNNEL_TOKEN` | 空 | Named Tunnel token；未设置时使用 Quick Tunnel |
+| `UNIFORM_EXTERNAL_PUBLIC_HOST` | 空 | Named Tunnel 的固定 HTTPS 域名，例如 `https://models.example.com` |
+| `UNIFORM_EXTERNAL_ACCESS_HEALTH_INTERVAL_SECONDS` | `15` | 公网可达性探测周期 |
+| `UNIFORM_EXTERNAL_ACCESS_HEALTH_TIMEOUT_SECONDS` | `8` | 单次公网探测超时 |
+| `UNIFORM_EXTERNAL_ACCESS_HEALTH_FAILURE_THRESHOLD` | `2` | 连续失败多少次后重启 Tunnel |
+| `UNIFORM_GATEWAY_REQUESTS_PER_MINUTE` | `60` | 每把 API Key 每分钟请求上限，`0` 为关闭 |
+| `UNIFORM_GATEWAY_TOKENS_PER_MINUTE` | `120000` | 每把 API Key 每分钟 token 上限，`0` 为关闭 |
+| `UNIFORM_GATEWAY_KEY_CONCURRENCY` | `4` | 每把 API Key 同时进行的请求上限，`0` 为关闭 |
+| `UNIFORM_GATEWAY_TOTAL_CONCURRENCY` | `16` | 网关全局同时进行的请求上限，`0` 为关闭 |
+| `UNIFORM_GATEWAY_QUOTA_RESERVATION_TOKENS` | `1024` | 未声明最大输出时的请求前额度预占量 |
 | `HF_TOKEN` | 空 | Hugging Face 凭证 |
 | `MODELSCOPE_API_TOKEN` | 空 | ModelScope 凭证 |
 | `UNIFORM_DOWNLOAD_WORKERS` | `4` | 文件下载并发 |
@@ -253,6 +249,7 @@ Quick Tunnel 地址由 Cloudflare 临时分配，`cloudflared` 或平台重启�
 | `DEEPSEEK_API_KEY` | 空 | DSH 原生会话访问 DeepSeek 官方模型使用的凭证 |
 | `DEEPSEEK_BASE_URL` | DeepSeek 官方端点 | DSH 原生会话可选的兼容 API 基础地址 |
 | `UNIFORM_AI_SESSIONS_ENABLED` | `true` | 是否允许启动 AI 终端 |
+| `UNIFORM_AI_FULL_ACCESS_ENABLED` | `false` | 是否允许交互式 AI 会话使用完整宿主机权限 |
 | `UNIFORM_UI_EDITING_ENABLED` | `true` | 是否允许右键 AI 修改前端界面 |
 | `UNIFORM_BENCHMARK_HISTORY_CSV` | `~/Downloads/模型性能测试 - Sheet1.csv` | AI 自定义评测完成后追加的历史表格；仅接受现有表头格式 |
 | `UNIFORM_ARENA_UVX_BINARY` | `uvx` | Spark Arena 使用的 `uvx` 可执行文件或绝对路径 |
@@ -383,7 +380,8 @@ uniformctl deploy → 权重下载 → 镜像拉取 → vLLM 启动
   workspace 沙箱的常规请求；任务说明要求它持续调试到真实推理成功或遇到真正阻塞。
 - “交互审批”保留逐条确认，适合不熟悉的教程。
 - “完整宿主机权限”关闭 Codex 命令沙箱和逐条审批，必须明确勾选风险确认。它仅受当前操作
-  系统用户权限限制，可能访问或修改该用户可访问的所有数据。
+  系统用户权限限制，可能访问或修改该用户可访问的所有数据。该模式默认由服务端禁用；只有
+  在可信宿主机上显式设置 `UNIFORM_AI_FULL_ACCESS_ENABLED=true` 并重启服务后才可选择。
 
 即使使用自主模式，宿主机 sudo、删除既有权重、操作无关容器、安全配置和凭证访问仍应由
 用户决定。平台不会存储 sudo 密码。

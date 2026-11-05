@@ -1203,6 +1203,33 @@ def test_autonomous_and_full_access_modes() -> None:
     assert "explicitly requested multi-node" in multi_node[-1]
 
 
+def test_full_access_requires_server_enable_flag(tmp_path: Path) -> None:
+    app = create_app(
+        Settings(
+            data_dir=tmp_path,
+            worker_enabled=False,
+            ai_full_access_enabled=False,
+        )
+    )
+    with TestClient(app) as client:
+        options = client.get("/api/v1/ai/execution-options")
+        assert options.status_code == 200
+        assert options.json() == {"full_access_enabled": False}
+
+        response = client.post(
+            "/api/v1/ai/sessions",
+            json={
+                "provider": "codex",
+                "task_type": "general",
+                "execution_mode": "full_access",
+                "full_access_acknowledged": True,
+                "initial_prompt": "inspect the host",
+            },
+        )
+        assert response.status_code == 403
+        assert "UNIFORM_AI_FULL_ACCESS_ENABLED" in response.json()["detail"]
+
+
 def test_deployment_topology_requires_explicit_multi_node_intent() -> None:
     conditional = AISessionCreate(
         provider="codex",

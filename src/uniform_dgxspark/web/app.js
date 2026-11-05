@@ -175,6 +175,8 @@ function renderServicePublication(publication, apiKey=null, error="") {
   const externalEnabled=Boolean(safePublication?.external_access_enabled);
   const externalState=safePublication?.external_access_state||"stopped";
   const externalRunning=externalState==="running"&&Boolean(safePublication?.external_url);
+  const externalMode=safePublication?.external_access_mode||"quick";
+  const externalModeLabel=externalMode==="named"?"Cloudflare 固定 Tunnel":"Cloudflare Quick Tunnel";
   const externalStateLabel=({running:"外网已连通",starting:"正在连接外网",error:"外网连接异常",stopped:"外网未开启"})[externalState]||externalState;
   const statusClass=enabled&&gatewayReady?"running":(enabled?"unhealthy":"stopped");
   const statusLabel=enabled?(gatewayReady?"已发布":"发布网关异常"):"仅本机访问";
@@ -186,16 +188,23 @@ function renderServicePublication(publication, apiKey=null, error="") {
       <div class="publication-copy-row"><input id="publication-api-key" value="${escapeHtml(apiKey)}" readonly autocomplete="off" spellcheck="false"><button type="button" class="secondary" data-copy-publication="publication-api-key" data-copy-label="API Key">复制</button></div>
     </div>`:"";
   const externalError=safePublication?.external_access_error?`<p class="form-error">${escapeHtml(safePublication.external_access_error)}</p>`:"";
+  const externalHealth=[
+    safePublication?.external_last_healthy_at?`最近连通 ${new Date(safePublication.external_last_healthy_at).toLocaleString()}`:"",
+    safePublication?.external_consecutive_health_failures?`连续失败 ${safePublication.external_consecutive_health_failures} 次`:"",
+    safePublication?.external_restart_count?`已自动重连 ${safePublication.external_restart_count} 次`:"",
+    safePublication?.external_next_retry_at?`下次重试 ${new Date(safePublication.external_next_retry_at).toLocaleString()}`:"",
+  ].filter(Boolean).join(" · ");
+  const externalHealthLine=externalHealth?`<small class="publication-health">${escapeHtml(externalHealth)}</small>`:"";
   const externalUrlRow=externalRunning?`
     <label>OpenAI 外网 Base URL<div class="publication-copy-row"><input id="publication-external-url" value="${escapeHtml(safePublication.external_url)}" readonly spellcheck="false"><button type="button" class="secondary" data-copy-publication="publication-external-url" data-copy-label="外网 Base URL">复制</button></div></label>`:"";
   const externalStartButton=!externalEnabled||externalState==="error"?`<button type="button" class="primary" data-publication-action="external-start" ${externalState==="starting"?"disabled":""}>${externalEnabled?"重新连接外网":"开启外网访问"}</button>`:"";
   const externalStopButton=externalEnabled?`<button type="button" class="danger" data-publication-action="external-stop">关闭外网访问</button>`:"";
   const externalPanel=`
     <section class="publication-external-panel ${state.servicePublicationFocus==="external"?"focus":""}">
-      <div class="publication-external-head"><div><strong>外网访问</strong><small>Cloudflare Quick Tunnel</small></div><span class="status ${externalRunning?"running":(externalEnabled?"unhealthy":"stopped")}">${externalStateLabel}</span></div>
+      <div class="publication-external-head"><div><strong>外网访问</strong><small>${externalModeLabel}</small></div><span class="status ${externalRunning?"running":(externalEnabled?"unhealthy":"stopped")}">${externalStateLabel}</span></div>
       <p>外网入口复用当前局域网发布 ID 和 API Key，不会暴露模型原始端口。Key 轮换后两个入口同时生效。</p>
-      ${externalUrlRow}${externalError}
-      <p class="publication-quick-tunnel-note">Quick Tunnel 地址由 Cloudflare 临时分配。cloudflared 或平台重启后地址会变化，需要回到这里重新复制；长期固定入口应改用正式 Tunnel 和自有域名。</p>
+      ${externalUrlRow}${externalError}${externalHealthLine}
+      <p class="publication-quick-tunnel-note">${externalMode==="named"?"固定 Tunnel 使用你配置的自有域名；平台会持续探测公网可达性并在断线后自动重连。":"Quick Tunnel 地址由 Cloudflare 临时分配，cloudflared 或平台重启后地址会变化；长期固定入口请配置正式 Tunnel 和自有域名。"}</p>
       <div class="publication-actions">${externalStartButton}${externalStopButton}</div>
     </section>`;
   const publishedPanel=enabled?`
@@ -250,7 +259,7 @@ async function runServicePublicationAction(action) {
       const publication=await api(externalPath,{method:action==="external-start"?"POST":"DELETE",...mutationOptions});
       if(!isCurrent()) return;
       renderServicePublication(publication,visibleApiKey);
-      toast(action==="external-start"?"外网访问已开启，请复制新的外网 Base URL":"已关闭外网访问，局域网入口保持不变");
+      toast(action==="external-start"?"外网访问已连接，请复制外网 Base URL":"已关闭外网访问，局域网入口保持不变");
       return;
     }
     if(action==="revoke") {
@@ -2777,6 +2786,17 @@ function clearAiTerminalPanel() {
 
 function updateExecutionModeNotice() { const full=document.querySelector("#ai-execution-mode").value==="full_access"; const acknowledgement=document.querySelector("#full-access-ack"); acknowledgement.hidden=!full; acknowledgement.querySelector("input").required=full; if(!full) acknowledgement.querySelector("input").checked=false; }
 document.querySelector("#ai-execution-mode").addEventListener("change",updateExecutionModeNotice);
+async function loadAiExecutionOptions() {
+  try {
+    const options=await api("/api/v1/ai/execution-options",{cache:"no-store"});
+    if(options.full_access_enabled) return;
+    const select=document.querySelector("#ai-execution-mode");
+    const full=select.querySelector('option[value="full_access"]');
+    if(full){full.disabled=true;full.textContent="完整宿主机权限（已禁用）";}
+    if(select.value==="full_access") select.value="autonomous";
+    updateExecutionModeNotice();
+  } catch (_) {}
+}
 const dshReasoningEfforts=new Set(["low","high","max"]);
 function updateAiProviderOptions(form=document.querySelector("#ai-form")) {
   const provider=form?.elements.provider?.value;
@@ -3130,6 +3150,7 @@ async function bootstrap() {
       if (entered) sessionStorage.setItem("uniform_api_token", entered);
     }
   } catch (_) {}
+  await loadAiExecutionOptions();
   await loadDeployments();
   await loadImages();
   await loadLocalModels();

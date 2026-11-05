@@ -44,6 +44,7 @@ class GatewayToken:
     enabled: bool
     token_limit: int | None
     used_tokens: int
+    reserved_tokens: int
     expires_at: datetime | None
     last_used_at: datetime | None
     created_at: datetime
@@ -233,8 +234,8 @@ class GatewayStore:
                 """
                 INSERT INTO gateway_tokens(
                     token_id, consumer_id, name, key_hash, key_hint, enabled,
-                    token_limit, used_tokens, expires_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 1, ?, 0, ?, ?, ?)
+                    token_limit, used_tokens, reserved_tokens, expires_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 1, ?, 0, 0, ?, ?, ?)
                 """,
                 (
                     token_id,
@@ -284,6 +285,73 @@ class GatewayStore:
         if row is None:
             raise GatewayTokenNotFound(token_id)
         return self._token_from_row(row, publication_ids, model_ids)
+
+    def reserve_tokens(
+        self, token_id: str, requested: int, *, strict: bool = False
+    ) -> int | None:
+        """Atomically reserve part of a token's remaining quota.
+
+        Returns the amount reserved. A token without a total limit reserves
+        zero; an exhausted token returns None. Reserving before proxying closes
+        the race where many concurrent requests all pass a stale quota check.
+        """
+        requested = max(int(requested), 0)
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT token_limit, used_tokens, reserved_tokens, enabled
+                FROM gateway_tokens WHERE token_id = ?
+                """,
+                (token_id,),
+            ).fetchone()
+            if row is None or not bool(row["enabled"]):
+                connection.rollback()
+                return None
+            token_limit = (
+                int(row["token_limit"]) if row["token_limit"] is not None else None
+            )
+            if token_limit is None:
+                connection.commit()
+                return 0
+            remaining = token_limit - int(row["used_tokens"]) - int(
+                row["reserved_tokens"]
+            )
+            if remaining <= 0:
+                connection.rollback()
+                return None
+            if strict and requested > remaining:
+                connection.rollback()
+                return None
+            amount = min(max(requested, 1), remaining)
+            connection.execute(
+                """
+                UPDATE gateway_tokens
+                SET reserved_tokens = reserved_tokens + ?, updated_at = ?
+                WHERE token_id = ?
+                """,
+                (amount, to_iso(utc_now()), token_id),
+            )
+            connection.commit()
+            return amount
+
+    def release_reserved_tokens(self, token_id: str, amount: int) -> None:
+        if amount <= 0:
+            return
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE gateway_tokens
+                SET reserved_tokens = CASE
+                    WHEN reserved_tokens >= ? THEN reserved_tokens - ?
+                    ELSE 0
+                END,
+                updated_at = ?
+                WHERE token_id = ?
+                """,
+                (amount, amount, to_iso(utc_now()), token_id),
+            )
+            connection.commit()
 
     def find_token_by_key(self, api_key: str) -> GatewayToken | None:
         if not api_key or len(api_key) > 512:
@@ -371,9 +439,14 @@ class GatewayStore:
         usage_source: str,
         latency_ms: int,
         request_id: str | None,
+        reserved_tokens: int = 0,
+        charge_reserved: bool = False,
     ) -> None:
         now = to_iso(utc_now())
+        reservation = max(int(reserved_tokens), 0)
         used_tokens = max(total_tokens or 0, 0)
+        if charge_reserved and total_tokens is None and reservation:
+            used_tokens = reservation
         with self.database.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(
@@ -410,10 +483,15 @@ class GatewayStore:
                 connection.execute(
                     """
                     UPDATE gateway_tokens
-                    SET used_tokens = used_tokens + ?, last_used_at = ?
+                    SET used_tokens = used_tokens + ?,
+                        reserved_tokens = CASE
+                            WHEN reserved_tokens >= ? THEN reserved_tokens - ?
+                            ELSE 0
+                        END,
+                        last_used_at = ?
                     WHERE token_id = ?
                     """,
-                    (used_tokens, now, token_id),
+                    (used_tokens, reservation, reservation, now, token_id),
                 )
             connection.commit()
 
@@ -559,6 +637,7 @@ class GatewayStore:
             enabled=bool(row["enabled"]),
             token_limit=int(row["token_limit"]) if row["token_limit"] is not None else None,
             used_tokens=int(row["used_tokens"]),
+            reserved_tokens=int(row["reserved_tokens"]),
             expires_at=(
                 datetime.fromisoformat(str(row["expires_at"]).replace("Z", "+00:00"))
                 if row["expires_at"] is not None

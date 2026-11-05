@@ -133,7 +133,12 @@ from .services.accuracy import (
     AccuracyTargetError,
 )
 from .services.ai_accuracy import AIAccuracyManager
-from .services.ai_terminal import AIProviderUnavailable, AISessionBusy, AITerminalManager
+from .services.ai_terminal import (
+    AIFullAccessDisabled,
+    AIProviderUnavailable,
+    AISessionBusy,
+    AITerminalManager,
+)
 from .services.arena import (
     ArenaBusy,
     ArenaLeaderboardError,
@@ -490,6 +495,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             listen_port=resolved_settings.publication_port,
             advertise_host=resolved_settings.publication_advertise_host,
             request_timeout_seconds=resolved_settings.publication_request_timeout_seconds,
+            gateway_requests_per_minute=resolved_settings.gateway_requests_per_minute,
+            gateway_tokens_per_minute=resolved_settings.gateway_tokens_per_minute,
+            gateway_key_concurrency=resolved_settings.gateway_key_concurrency,
+            gateway_total_concurrency=resolved_settings.gateway_total_concurrency,
+            gateway_quota_reservation_tokens=(
+                resolved_settings.gateway_quota_reservation_tokens
+            ),
         )
         external_access_manager = ServiceExternalAccessManager(
             resolved_settings.external_access_state_path,
@@ -497,6 +509,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             cloudflared_binary=resolved_settings.cloudflared_binary,
             gateway_url=f"http://127.0.0.1:{resolved_settings.publication_port}",
             start_timeout_seconds=(resolved_settings.external_access_start_timeout_seconds),
+            tunnel_token=resolved_settings.external_tunnel_token,
+            public_host=resolved_settings.external_public_host,
+            health_interval_seconds=(
+                resolved_settings.external_access_health_interval_seconds
+            ),
+            health_timeout_seconds=(
+                resolved_settings.external_access_health_timeout_seconds
+            ),
+            health_failure_threshold=(
+                resolved_settings.external_access_health_failure_threshold
+            ),
         )
         download_manager = HuggingFaceDownloadManager(
             resolved_settings.models_dir,
@@ -537,6 +560,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             control_url=resolved_settings.control_url,
             benchmark_reference_dir=resolved_settings.benchmark_reference_dir,
             benchmark_history_csv=resolved_settings.benchmark_history_csv,
+            allow_full_access=resolved_settings.ai_full_access_enabled,
         )
         ai_deployment_templates = AIDeploymentTemplateManager(
             ai_store,
@@ -1617,6 +1641,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         manager: AITerminalManager = application.state.ai_terminal
         return manager.providers()
 
+    @application.get("/api/v1/ai/execution-options")
+    def ai_execution_options(_: None = Depends(require_ai_enabled)) -> dict[str, bool]:
+        return {"full_access_enabled": resolved_settings.ai_full_access_enabled}
+
     @application.post(
         "/api/v1/ai/sessions",
         response_model=AISessionRead,
@@ -1835,6 +1863,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 deployment_context=deployment_context,
                 deployment_logs=deployment_logs,
             )
+        except AIFullAccessDisabled as error:
+            raise HTTPException(status_code=403, detail=str(error)) from error
         except AIProviderUnavailable as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         except Exception as error:
@@ -1984,6 +2014,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return manager.resume(session_id, prompt=payload.prompt)
         except AISessionNotFound as error:
             raise HTTPException(status_code=404, detail="AI session not found") from error
+        except AIFullAccessDisabled as error:
+            raise HTTPException(status_code=403, detail=str(error)) from error
         except AIProviderUnavailable as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         except AISessionBusy as error:
@@ -2563,6 +2595,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 failure_reason = f"{failure_reason}；原部署 AI 会话无法接管：{original_error}"
         try:
             fallback = create_reuse_fallback_session(payload, template, failure_reason)
+        except AIFullAccessDisabled as error:
+            ai_store.abandon_reuse_request(payload.client_request_id)
+            raise HTTPException(status_code=403, detail=str(error)) from error
         except AIProviderUnavailable as error:
             ai_store.abandon_reuse_request(payload.client_request_id)
             raise HTTPException(status_code=409, detail=str(error)) from error
@@ -2715,13 +2750,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             external_url=external_access.public_base_url,
             external_access_state=external_access.tunnel_state,
             external_access_error=external_access.error,
+            external_access_mode=external_access.mode,
+            external_health_checked_at=external_access.health_checked_at,
+            external_last_healthy_at=external_access.last_healthy_at,
+            external_consecutive_health_failures=(
+                external_access.consecutive_health_failures
+            ),
+            external_restart_count=external_access.restart_count,
+            external_next_retry_at=external_access.next_retry_at,
             created_at=publication.created_at if publication else None,
             updated_at=publication.updated_at if publication else None,
         )
 
     def gateway_token_read(token: GatewayToken) -> GatewayTokenRead:
         remaining = (
-            max(token.token_limit - token.used_tokens, 0)
+            max(token.token_limit - token.used_tokens - token.reserved_tokens, 0)
             if token.token_limit is not None
             else None
         )
@@ -2733,6 +2776,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             enabled=token.enabled and token.consumer_enabled,
             token_limit=token.token_limit,
             used_tokens=token.used_tokens,
+            reserved_tokens=token.reserved_tokens,
             remaining_tokens=remaining,
             expires_at=token.expires_at,
             last_used_at=token.last_used_at,
@@ -3353,6 +3397,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             ),
                         ),
                         deployment_context={"service_handoff": snapshot_latest},
+                        trusted=True,
                     )
                     store.add_audit(
                         session_id,

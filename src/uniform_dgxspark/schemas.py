@@ -857,6 +857,12 @@ class ServicePublicationRead(BaseModel):
     external_url: str | None = None
     external_access_state: Literal["stopped", "starting", "running", "error"] = "stopped"
     external_access_error: str | None = None
+    external_access_mode: Literal["quick", "named"] = "quick"
+    external_health_checked_at: str | None = None
+    external_last_healthy_at: str | None = None
+    external_consecutive_health_failures: int = 0
+    external_restart_count: int = 0
+    external_next_retry_at: str | None = None
     created_at: datetime | None
     updated_at: datetime | None
 
@@ -889,6 +895,7 @@ class GatewayTokenRead(BaseModel):
     enabled: bool
     token_limit: int | None
     used_tokens: int
+    reserved_tokens: int = 0
     remaining_tokens: int | None
     expires_at: datetime | None
     last_used_at: datetime | None

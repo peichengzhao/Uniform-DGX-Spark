@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 28
+SCHEMA_VERSION = 29
 
 
 class Database:
@@ -313,6 +313,7 @@ class Database:
                     enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
                     token_limit INTEGER CHECK(token_limit IS NULL OR token_limit > 0),
                     used_tokens INTEGER NOT NULL DEFAULT 0 CHECK(used_tokens >= 0),
+                    reserved_tokens INTEGER NOT NULL DEFAULT 0 CHECK(reserved_tokens >= 0),
                     expires_at TEXT,
                     last_used_at TEXT,
                     created_at TEXT NOT NULL,
@@ -623,6 +624,18 @@ class Database:
                 WHERE publication.model_key != ''
                 """
             )
+            gateway_token_columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(gateway_tokens)"
+                ).fetchall()
+            }
+            if "reserved_tokens" not in gateway_token_columns:
+                connection.execute(
+                    "ALTER TABLE gateway_tokens ADD COLUMN "
+                    "reserved_tokens INTEGER NOT NULL DEFAULT 0 "
+                    "CHECK(reserved_tokens >= 0)"
+                )
             ui_edit_columns = {
                 row["name"]
                 for row in connection.execute("PRAGMA table_info(ui_edit_jobs)").fetchall()

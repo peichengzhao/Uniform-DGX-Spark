@@ -42,8 +42,10 @@ class _FakeProcess:
         *,
         output: bytes | None = None,
         exit_code: int | None = None,
+        kwargs: dict[str, object] | None = None,
     ) -> None:
         self.args = command
+        self.kwargs = kwargs or {}
         self.stdout = _FakeStdout([output] if output else [])
         self.returncode = exit_code
         self.terminated = False
@@ -73,8 +75,10 @@ def _fake_popen_factory(
     output: bytes | None = None,
     exit_code: int | None = None,
 ):
-    def factory(command, **_kwargs):  # noqa: ANN001, ANN202
-        process = _FakeProcess(command, output=output, exit_code=exit_code)
+    def factory(command, **kwargs):  # noqa: ANN001, ANN202
+        process = _FakeProcess(
+            command, output=output, exit_code=exit_code, kwargs=kwargs
+        )
         created.append(process)
         return process
 
@@ -230,6 +234,77 @@ def test_restore_keeps_valid_subscriptions_and_removes_stale_ids(
     assert manager.status("stale").enabled is False
     assert json.loads(state_path.read_text(encoding="utf-8")) == {"publication_ids": ["valid"]}
     assert state_path.stat().st_mode & 0o777 == 0o600
+    manager.shutdown()
+
+
+def test_named_tunnel_uses_stable_host_and_does_not_expose_token_in_status(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    created: list[_FakeProcess] = []
+    monkeypatch.setattr(
+        external_access.subprocess,
+        "Popen",
+        _fake_popen_factory(
+            created,
+            output=(
+                b"token=named-tunnel-token\n"
+                b"INF Registered tunnel connection connIndex=0\n"
+            ),
+        ),
+    )
+    binary = tmp_path / "cloudflared"
+    binary.touch()
+    manager = ServiceExternalAccessManager(
+        tmp_path / "service-external-access.json",
+        cloudflared_binary=str(binary),
+        tunnel_token="named-tunnel-token",
+        public_host="models.example.com",
+        start_timeout_seconds=1,
+    )
+
+    status = manager.start("publication-named")
+
+    assert status.mode == "named"
+    assert status.public_base_url == "https://models.example.com/publication-named/v1"
+    assert created[0].args == [
+        str(binary),
+        "tunnel",
+        "--no-autoupdate",
+        "run",
+    ]
+    assert created[0].kwargs["env"]["TUNNEL_TOKEN"] == "named-tunnel-token"  # type: ignore[index]
+    assert "named-tunnel-token" not in created[0].args
+    assert "named-tunnel-token" not in repr(status)
+    assert all("named-tunnel-token" not in line for line in manager._log_lines)
+    manager.shutdown()
+
+
+def test_public_health_failure_restarts_tunnel_and_increments_counter(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    created: list[_FakeProcess] = []
+    monkeypatch.setattr(
+        external_access.subprocess,
+        "Popen",
+        _fake_popen_factory(
+            created,
+            output=b"https://health-test.trycloudflare.com\n",
+        ),
+    )
+    manager = _manager(tmp_path)
+    manager.health_failure_threshold = 1
+    manager.start("publication-health")
+    manager._probe_public_host = lambda _host: False  # type: ignore[method-assign]
+
+    manager._watchdog_tick()
+
+    status = manager.status("publication-health")
+    assert len(created) == 2
+    assert status.tunnel_state == "running"
+    assert status.restart_count == 1
+    assert status.consecutive_health_failures == 0
     manager.shutdown()
 
 

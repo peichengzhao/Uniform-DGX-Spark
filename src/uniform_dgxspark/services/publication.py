@@ -6,9 +6,11 @@ import hmac
 import ipaddress
 import json
 import logging
+import math
 import socket
 import threading
 import time
+from collections import deque
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from secrets import token_urlsafe
@@ -82,6 +84,105 @@ class GatewayRequestIdentity:
     legacy_key_hash: str | None = None
 
 
+@dataclass(slots=True)
+class GatewayAdmissionLease:
+    key: str
+    token_event: list[float | int]
+    released: bool = False
+
+
+class GatewayAdmissionController:
+    """Per-key request/token windows plus live concurrency protection."""
+
+    def __init__(
+        self,
+        *,
+        requests_per_minute: int,
+        tokens_per_minute: int,
+        key_concurrency: int,
+        total_concurrency: int,
+    ) -> None:
+        self.requests_per_minute = max(int(requests_per_minute), 0)
+        self.tokens_per_minute = max(int(tokens_per_minute), 0)
+        self.key_concurrency = max(int(key_concurrency), 0)
+        self.total_concurrency = max(int(total_concurrency), 0)
+        self._requests: dict[str, deque[float]] = {}
+        self._tokens: dict[str, deque[list[float | int]]] = {}
+        self._active_by_key: dict[str, int] = {}
+        self._active_total = 0
+        self._lock = threading.Lock()
+
+    def acquire(
+        self, key: str, projected_tokens: int
+    ) -> tuple[GatewayAdmissionLease | None, int]:
+        now = time.monotonic()
+        projected_tokens = max(int(projected_tokens), 0)
+        with self._lock:
+            requests = self._requests.setdefault(key, deque())
+            self._prune_times(requests, now)
+            if (
+                self.requests_per_minute > 0
+                and len(requests) >= self.requests_per_minute
+            ):
+                retry_after = max(1, math.ceil(60 - (now - requests[0])))
+                return None, retry_after
+
+            token_events = self._tokens.setdefault(key, deque())
+            self._prune_token_events(token_events, now)
+            used_tokens = sum(int(event[1]) for event in token_events)
+            if (
+                self.tokens_per_minute > 0
+                and used_tokens + projected_tokens > self.tokens_per_minute
+            ):
+                return None, 60
+
+            key_active = self._active_by_key.get(key, 0)
+            if self.key_concurrency > 0 and key_active >= self.key_concurrency:
+                return None, 1
+            if (
+                self.total_concurrency > 0
+                and self._active_total >= self.total_concurrency
+            ):
+                return None, 1
+
+            requests.append(now)
+            event: list[float | int] = [now, projected_tokens]
+            token_events.append(event)
+            self._active_by_key[key] = key_active + 1
+            self._active_total += 1
+            return GatewayAdmissionLease(key, event), 0
+
+    def release(
+        self, lease: GatewayAdmissionLease | None, actual_tokens: int | None = None
+    ) -> None:
+        if lease is None or lease.released:
+            return
+        with self._lock:
+            if lease.released:
+                return
+            lease.released = True
+            if actual_tokens is not None:
+                lease.token_event[1] = max(int(actual_tokens), 0)
+            active = self._active_by_key.get(lease.key, 0)
+            if active <= 1:
+                self._active_by_key.pop(lease.key, None)
+            else:
+                self._active_by_key[lease.key] = active - 1
+            self._active_total = max(self._active_total - 1, 0)
+
+    @staticmethod
+    def _prune_times(events: deque[float], now: float) -> None:
+        while events and now - events[0] >= 60:
+            events.popleft()
+
+    @classmethod
+    def _prune_token_events(
+        cls, events: deque[list[float | int]], now: float
+    ) -> None:
+        while events and now - float(events[0][0]) >= 60:
+            events.popleft()
+
+
 class ServicePublicationManager:
     _ALLOWED_ENDPOINTS = {
         ("GET", "v1/models"),
@@ -111,6 +212,11 @@ class ServicePublicationManager:
         listen_port: int = 18181,
         advertise_host: str | None = None,
         request_timeout_seconds: int = 1800,
+        gateway_requests_per_minute: int = 60,
+        gateway_tokens_per_minute: int = 120_000,
+        gateway_key_concurrency: int = 4,
+        gateway_total_concurrency: int = 16,
+        gateway_quota_reservation_tokens: int = 1024,
     ) -> None:
         self.store = store
         self.deployment_store = deployment_store
@@ -121,6 +227,15 @@ class ServicePublicationManager:
         self.listen_port = listen_port
         self.advertise_host = advertise_host
         self.request_timeout_seconds = request_timeout_seconds
+        self.gateway_quota_reservation_tokens = max(
+            int(gateway_quota_reservation_tokens), 1
+        )
+        self._admission = GatewayAdmissionController(
+            requests_per_minute=gateway_requests_per_minute,
+            tokens_per_minute=gateway_tokens_per_minute,
+            key_concurrency=gateway_key_concurrency,
+            total_concurrency=gateway_total_concurrency,
+        )
         self.gateway_app = self._build_gateway_app()
         self._gateway_lock = threading.RLock()
         self._operation_lock = threading.Lock()
@@ -470,17 +585,54 @@ class ServicePublicationManager:
                     status_code=400,
                     content={"error": {"message": "request body was interrupted"}},
                 )
-            model = self._request_model(body)
+            prepared_body = self._prepare_request_body(normalized_path, body)
+            model = self._request_model(prepared_body)
             started_at = time.monotonic()
-            try:
-                if not await asyncio.to_thread(
-                    self._publication_is_current, publication, identity
-                ):
-                    return JSONResponse(
-                        status_code=401,
-                        content={"error": {"message": "API key or model access was revoked"}},
-                        headers={"WWW-Authenticate": "Bearer"},
+            if not await asyncio.to_thread(
+                self._publication_is_current, publication, identity
+            ):
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": {"message": "API key or model access was revoked"}},
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            projected_tokens, explicit_token_budget = self._request_token_budget(
+                prepared_body
+            )
+            admission_key = (
+                identity.token_id
+                or identity.legacy_key_hash
+                or self._hash_api_key(supplied_key)
+            )
+            lease, retry_after = self._admission.acquire(
+                admission_key, projected_tokens
+            )
+            if lease is None:
+                return JSONResponse(
+                    status_code=429,
+                    content={"error": {"message": "gateway rate limit exceeded"}},
+                    headers={"Retry-After": str(max(retry_after, 1))},
+                )
+            reservation = 0
+            if request.method == "POST" and identity.token_id and self.gateway_store:
+                try:
+                    reservation = await asyncio.to_thread(
+                        self.gateway_store.reserve_tokens,
+                        identity.token_id,
+                        projected_tokens,
+                        strict=explicit_token_budget,
                     )
+                except Exception:
+                    self._admission.release(lease, 0)
+                    raise
+                if reservation is None:
+                    self._admission.release(lease, 0)
+                    return JSONResponse(
+                        status_code=429,
+                        content={"error": {"message": "API key token quota is exhausted"}},
+                        headers={"Retry-After": "60"},
+                    )
+            try:
                 target = await asyncio.to_thread(
                     self._resolve_target,
                     publication.target_type,
@@ -492,10 +644,11 @@ class ServicePublicationManager:
                     normalized_path,
                     request.url.query,
                     request.method,
-                    body,
+                    prepared_body,
                     request.headers,
                 )
             except (PublicationTargetNotFound, PublicationTargetUnavailable):
+                self._admission.release(lease, 0)
                 await asyncio.to_thread(
                     self._record_usage_best_effort,
                     publication,
@@ -510,12 +663,15 @@ class ServicePublicationManager:
                     "unavailable",
                     started_at,
                     None,
+                    reservation,
+                    False,
                 )
                 return JSONResponse(
                     status_code=503,
                     content={"error": {"message": "model service is unavailable"}},
                 )
             except httpx.HTTPError:
+                self._admission.release(lease, 0)
                 await asyncio.to_thread(
                     self._record_usage_best_effort,
                     publication,
@@ -530,11 +686,26 @@ class ServicePublicationManager:
                     "unavailable",
                     started_at,
                     None,
+                    reservation,
+                    False,
                 )
                 return JSONResponse(
                     status_code=502,
                     content={"error": {"message": "model service request failed"}},
                 )
+            except Exception:
+                self._admission.release(lease, 0)
+                if (
+                    self.gateway_store is not None
+                    and identity.token_id
+                    and reservation
+                ):
+                    await asyncio.to_thread(
+                        self.gateway_store.release_reserved_tokens,
+                        identity.token_id,
+                        reservation,
+                    )
+                raise
             headers = {
                 name: value
                 for name, value in upstream.headers.items()
@@ -550,6 +721,8 @@ class ServicePublicationManager:
                     normalized_path,
                     request.method,
                     started_at,
+                    lease,
+                    reservation,
                 ),
                 status_code=upstream.status_code,
                 headers=headers,
@@ -578,7 +751,12 @@ class ServicePublicationManager:
         inbound_headers: Headers,
     ) -> tuple[httpx.Response, httpx.AsyncClient]:
         get_header = inbound_headers.get
-        headers = {"Accept": get_header("accept", "application/json")}
+        headers = {
+            "Accept": get_header("accept", "application/json"),
+            # Usage capture reads the raw response stream. Disable upstream
+            # compression so JSON/SSE accounting is not hidden by gzip bytes.
+            "Accept-Encoding": "identity",
+        }
         content_type = get_header("content-type")
         if content_type:
             headers["Content-Type"] = content_type
@@ -619,6 +797,8 @@ class ServicePublicationManager:
         endpoint: str,
         method: str,
         started_at: float,
+        admission_lease: GatewayAdmissionLease,
+        reserved_tokens: int,
     ) -> AsyncIterator[bytes]:
         last_validation = 0.0
         captured = bytearray()
@@ -640,6 +820,20 @@ class ServicePublicationManager:
             await upstream.aclose()
             await client.aclose()
             prompt_tokens, completion_tokens, total_tokens = self._extract_usage(bytes(captured))
+            charge_reserved = (
+                upstream.status_code < 400 and total_tokens is None and reserved_tokens > 0
+            )
+            actual_tokens = (
+                total_tokens
+                if total_tokens is not None
+                else (reserved_tokens if charge_reserved else 0)
+            )
+            recorded_total = (
+                total_tokens
+                if total_tokens is not None
+                else (reserved_tokens if charge_reserved else None)
+            )
+            self._admission.release(admission_lease, actual_tokens)
             await asyncio.to_thread(
                 self._record_usage_best_effort,
                 publication,
@@ -650,10 +844,16 @@ class ServicePublicationManager:
                 upstream.status_code,
                 prompt_tokens,
                 completion_tokens,
-                total_tokens,
-                "upstream" if total_tokens is not None else "unavailable",
+                recorded_total,
+                (
+                    "upstream"
+                    if total_tokens is not None
+                    else ("estimated" if charge_reserved else "unavailable")
+                ),
                 started_at,
                 upstream.headers.get("x-request-id"),
+                reserved_tokens,
+                charge_reserved,
             )
 
     def _authenticate_request(
@@ -727,6 +927,41 @@ class ServicePublicationManager:
         return model if isinstance(model, str) and model else None
 
     @classmethod
+    def _prepare_request_body(cls, path: str, body: bytes) -> bytes:
+        if not body or path not in {"v1/chat/completions", "v1/completions"}:
+            return body
+        try:
+            payload = json.loads(body)
+        except (UnicodeDecodeError, ValueError):
+            return body
+        if not isinstance(payload, dict) or payload.get("stream") is not True:
+            return body
+        options = payload.get("stream_options")
+        if not isinstance(options, dict):
+            options = {}
+        if options.get("include_usage") is not True:
+            options["include_usage"] = True
+            payload["stream_options"] = options
+            return json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        return body
+
+    def _request_token_budget(self, body: bytes) -> tuple[int, bool]:
+        default = self.gateway_quota_reservation_tokens
+        if not body:
+            return 0, False
+        try:
+            payload = json.loads(body)
+        except (UnicodeDecodeError, ValueError):
+            return default, False
+        if not isinstance(payload, dict):
+            return default, False
+        for key in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
+            value = payload.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                return max(value, 1), True
+        return default, False
+
+    @classmethod
     def _extract_usage(cls, payload: bytes) -> tuple[int | None, int | None, int | None]:
         if not payload:
             return None, None, None
@@ -747,7 +982,11 @@ class ServicePublicationManager:
             if not isinstance(usage, dict):
                 continue
             prompt = cls._optional_token_count(usage.get("prompt_tokens"))
+            if prompt is None:
+                prompt = cls._optional_token_count(usage.get("input_tokens"))
             completion = cls._optional_token_count(usage.get("completion_tokens"))
+            if completion is None:
+                completion = cls._optional_token_count(usage.get("output_tokens"))
             total = cls._optional_token_count(usage.get("total_tokens"))
             if total is None and prompt is not None and completion is not None:
                 total = prompt + completion
@@ -775,6 +1014,8 @@ class ServicePublicationManager:
         usage_source: str,
         started_at: float,
         request_id: str | None,
+        reserved_tokens: int = 0,
+        charge_reserved: bool = False,
     ) -> None:
         if self.gateway_store is None:
             return
@@ -799,9 +1040,21 @@ class ServicePublicationManager:
                 usage_source=usage_source,
                 latency_ms=int((time.monotonic() - started_at) * 1000),
                 request_id=request_id,
+                reserved_tokens=reserved_tokens,
+                charge_reserved=charge_reserved,
             )
         except Exception:  # noqa: BLE001 - usage accounting must not break the proxy
             LOGGER.exception("could not record gateway usage for %s", publication.publication_id)
+            if identity.token_id and reserved_tokens:
+                try:
+                    self.gateway_store.release_reserved_tokens(
+                        identity.token_id, reserved_tokens
+                    )
+                except Exception:  # noqa: BLE001 - one last best effort release
+                    LOGGER.exception(
+                        "could not release reserved quota for %s",
+                        identity.token_id,
+                    )
 
     @staticmethod
     def _request_api_key(request: Request) -> str:

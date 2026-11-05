@@ -271,12 +271,14 @@ def test_publication_gateway_authenticates_and_streams_without_forwarding_key(
         assert response.headers["x-request-id"] == "upstream-request"
         assert "connection" not in response.headers
         assert captured["url"] == "http://127.0.0.1:19080/v1/chat/completions"
+        assert json.loads(captured["body"])["stream_options"]["include_usage"] is True
         forwarded_headers = {
             str(name).lower(): value
             for name, value in dict(captured["headers"]).items()
         }
         assert "authorization" not in forwarded_headers
         assert "x-api-key" not in forwarded_headers
+        assert forwarded_headers["accept-encoding"] == "identity"
         assert upstream.closed is True
 
 
