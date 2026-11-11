@@ -20,7 +20,7 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 TERMINAL_STATUSES = {"running", "stopped", "failed", "cancelled"}
-PLUGIN_VERSION = "1.2.2"
+PLUGIN_VERSION = "1.2.3"
 
 # The console is opened once per MCP server process, so the operator can watch
 # what the agent is doing without getting a new browser tab on every tool call.

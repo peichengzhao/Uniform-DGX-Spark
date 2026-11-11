@@ -83,13 +83,13 @@ https://github.com/peichengzhao/Uniform-DGX-Spark.git
 在 DeepSeek Harness 的“插件”页面选择本地安装，然后选择：
 
 ```text
-uniform-dgxspark-platform-1.2.2.tgz
+uniform-dgxspark-platform-1.2.3.tgz
 ```
 
 也可以使用 CLI（路径必须是绝对路径）：
 
 ```bash
-dsh plugin --profile default install /absolute/path/uniform-dgxspark-platform-1.2.2.tgz
+dsh plugin --profile default install /absolute/path/uniform-dgxspark-platform-1.2.3.tgz
 ```
 
 > 不要再使用 `.zip` 安装到 DSH。包根缺少 `package.json` 和 `dsh.bundle.patch`
@@ -191,15 +191,15 @@ Agent 第一次调用任意工具时，插件会用默认浏览器打开平台�
 ```bash
 NODE=.runtime/node/bin/node \
   python3 scripts/build-dsh-plugin.py --out dist --node "$NODE"
-sha256sum -c dist/uniform-dgxspark-platform-1.2.2.sha256
+sha256sum -c dist/uniform-dgxspark-platform-1.2.3.sha256
 ```
 
 主要产物：
 
 ```text
-dist/uniform-dgxspark-platform-1.2.2.tgz          # 安装到 DeepSeek Harness
-dist/uniform-dgxspark-platform-1.2.2-source.zip   # 源码审阅，不用于插件管理
-dist/uniform-dgxspark-platform-1.2.2.sha256
+dist/uniform-dgxspark-platform-1.2.3.tgz          # 安装到 DeepSeek Harness
+dist/uniform-dgxspark-platform-1.2.3-source.zip   # 源码审阅，不用于插件管理
+dist/uniform-dgxspark-platform-1.2.3.sha256
 ```
 
 构建会校验 `dsh.bundle.patch`、`files` 清单、Python/JavaScript 语法和禁止目录，

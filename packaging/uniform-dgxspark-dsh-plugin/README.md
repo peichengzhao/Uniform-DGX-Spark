@@ -5,7 +5,7 @@ This is a native **DeepSeek Harness bundle**. Its root `package.json` declares `
 ## Install on a colleague's computer
 
 1. Open the DeepSeek Harness Plugins page and choose a local package install.
-2. Select `uniform-dgxspark-platform-1.2.2.tgz`.
+2. Select `uniform-dgxspark-platform-1.2.3.tgz`.
 3. Configure the platform address and API key from a Harness terminal:
 
 ```bash

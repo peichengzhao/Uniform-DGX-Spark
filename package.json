@@ -1,6 +1,6 @@
 {
   "name": "uniform-dgxspark-platform",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "private": true,
   "type": "module",
   "description": "DeepSeek Harness bundle for the Uniform DGX Spark model platform.",

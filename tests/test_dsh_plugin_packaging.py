@@ -13,7 +13,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 BUILDER = ROOT / "scripts" / "build-dsh-plugin.py"
 NODE = ROOT / ".runtime" / "node" / "bin" / "node"
-VERSION = "1.2.2"
+VERSION = "1.2.3"
 
 
 def run(

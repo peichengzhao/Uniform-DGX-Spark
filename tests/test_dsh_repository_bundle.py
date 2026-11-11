@@ -16,7 +16,7 @@ NPM_CLI = ROOT / ".runtime" / "node" / "lib" / "node_modules" / "npm" / "bin" / 
 def test_repository_root_declares_dsh_bundle() -> None:
     manifest = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
     assert manifest["name"] == "uniform-dgxspark-platform"
-    assert manifest["version"] == "1.2.2"
+    assert manifest["version"] == "1.2.3"
     assert manifest["dsh"]["bundle"]["patch"] == "./cordis.patch.yml"
     assert (ROOT / "cordis.patch.yml").is_file()
 
