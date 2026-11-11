@@ -13,6 +13,10 @@ from uniform_dgxspark.main import create_app
 
 def create_model(root: Path, name: str, *, missing_shard: bool = False) -> Path:
     model = root / name
+    return create_model_at(model, missing_shard=missing_shard)
+
+
+def create_model_at(model: Path, *, missing_shard: bool = False) -> Path:
     model.mkdir(parents=True)
     (model / "config.json").write_text(
         json.dumps(
@@ -39,6 +43,38 @@ def create_model(root: Path, name: str, *, missing_shard: bool = False) -> Path:
             encoding="utf-8",
         )
     return model
+
+
+def test_local_model_scan_finds_huggingface_snapshot_layout(tmp_path: Path) -> None:
+    models = tmp_path / "models"
+    create_model(models, "direct-model")
+    snapshot = (
+        models
+        / "models--deepseek-ai--DeepSeek-Test"
+        / "snapshots"
+        / "master"
+    )
+    create_model_at(snapshot)
+    inference = snapshot / "inference"
+    inference.mkdir()
+    (inference / "config.json").write_text("{}", encoding="utf-8")
+    unrelated = models / "runtime" / "lib" / "python" / "site-packages"
+    unrelated.mkdir(parents=True)
+    (unrelated / "library.bin").write_bytes(b"not a model")
+
+    app = create_app(Settings(data_dir=tmp_path / "data", worker_enabled=False))
+    with TestClient(app) as client:
+        added = client.post(
+            "/api/v1/local-models/roots", json={"path": str(models)}
+        )
+        assert added.status_code == 201
+        inventory = client.get("/api/v1/local-models").json()
+
+    assert inventory["total"] == 2
+    by_name = {item["name"]: item for item in inventory["items"]}
+    assert set(by_name) == {"direct-model", "deepseek-ai--DeepSeek-Test"}
+    assert by_name["deepseek-ai--DeepSeek-Test"]["path"] == str(snapshot.resolve())
+    assert by_name["deepseek-ai--DeepSeek-Test"]["status"] == "ready"
 
 
 def test_local_model_roots_are_configurable_and_read_only(tmp_path: Path) -> None:

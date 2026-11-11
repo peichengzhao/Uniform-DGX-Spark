@@ -22,6 +22,9 @@ TOKENIZER_FILES = {
 }
 LFS_POINTER_MAX_BYTES = 1024
 LFS_OID_PATTERN = re.compile(r"^sha256:([0-9a-f]{64})$")
+MODEL_DISCOVERY_MAX_DEPTH = 2
+SNAPSHOT_DISCOVERY_MAX_DEPTH = 3
+IGNORED_DISCOVERY_DIRECTORIES = {"node_modules", "site-packages", "dist-packages"}
 
 
 @dataclass(frozen=True)
@@ -143,11 +146,93 @@ class LocalModelService:
             raise LocalModelRootError("configured model root is unavailable")
         if cls._has_model_markers(root):
             return [root]
-        return [
-            child
-            for child in root.iterdir()
-            if child.is_dir() and not child.name.startswith(".") and cls._has_model_markers(child)
-        ]
+
+        candidates: list[Path] = []
+        seen_candidates: set[Path] = set()
+
+        def add_candidate(path: Path) -> None:
+            try:
+                resolved = path.resolve()
+            except OSError:
+                return
+            if resolved not in seen_candidates:
+                seen_candidates.add(resolved)
+                candidates.append(path)
+
+        pending = [(root, 0)]
+        visited = {root.resolve()}
+        while pending:
+            directory, depth = pending.pop(0)
+            if depth >= MODEL_DISCOVERY_MAX_DEPTH:
+                continue
+            try:
+                children = sorted(directory.iterdir(), key=lambda path: path.name)
+            except OSError:
+                continue
+            for child in children:
+                if not cls._is_discoverable_directory(child):
+                    continue
+                try:
+                    resolved = child.resolve()
+                except OSError:
+                    continue
+                if resolved in visited:
+                    continue
+                visited.add(resolved)
+                if cls._has_model_markers(child):
+                    add_candidate(child)
+                else:
+                    pending.append((child, depth + 1))
+
+        for snapshots in cls._snapshot_directories(root):
+            try:
+                revisions = sorted(snapshots.iterdir(), key=lambda path: path.name)
+            except OSError:
+                continue
+            for revision in revisions:
+                if cls._is_discoverable_directory(revision) and cls._has_model_markers(
+                    revision
+                ):
+                    add_candidate(revision)
+        return sorted(candidates, key=lambda path: str(path.relative_to(root)))
+
+    @staticmethod
+    def _is_discoverable_directory(path: Path) -> bool:
+        return (
+            path.is_dir()
+            and not path.is_symlink()
+            and not path.name.startswith(".")
+            and path.name not in IGNORED_DISCOVERY_DIRECTORIES
+        )
+
+    @classmethod
+    def _snapshot_directories(cls, root: Path) -> list[Path]:
+        snapshots: list[Path] = []
+        pending = [(root, 0)]
+        visited = {root.resolve()}
+        while pending:
+            directory, depth = pending.pop(0)
+            if depth >= SNAPSHOT_DISCOVERY_MAX_DEPTH:
+                continue
+            try:
+                children = sorted(directory.iterdir(), key=lambda path: path.name)
+            except OSError:
+                continue
+            for child in children:
+                if not cls._is_discoverable_directory(child):
+                    continue
+                if child.name == "snapshots":
+                    snapshots.append(child)
+                    continue
+                try:
+                    resolved = child.resolve()
+                except OSError:
+                    continue
+                if resolved in visited:
+                    continue
+                visited.add(resolved)
+                pending.append((child, depth + 1))
+        return snapshots
 
     @staticmethod
     def _has_model_markers(path: Path) -> bool:
@@ -163,6 +248,7 @@ class LocalModelService:
 
     @classmethod
     def _inspect_model(cls, path: Path, root: Path) -> LocalModelRead:
+        display_name = cls._model_display_name(path, root)
         config = cls._read_config(path / "config.json")
         weights: list[Path] = []
         total_files = 0
@@ -215,7 +301,7 @@ class LocalModelService:
             else:
                 status_reason = "缺少部署所需配置"
         return LocalModelRead(
-            name=path.name,
+            name=display_name,
             path=str(path.resolve()),
             root_path=str(root.resolve()),
             architecture=architecture,
@@ -237,6 +323,25 @@ class LocalModelService:
             status=status,
             status_reason=status_reason,
         )
+
+    @staticmethod
+    def _model_display_name(path: Path, root: Path) -> str:
+        try:
+            relative_parts = path.relative_to(root).parts
+        except ValueError:
+            return path.name
+        try:
+            snapshots_index = relative_parts.index("snapshots")
+        except ValueError:
+            return path.name
+        repository_name = (
+            relative_parts[snapshots_index - 1]
+            if snapshots_index > 0
+            else root.name
+        )
+        if repository_name.startswith("models--"):
+            return repository_name.removeprefix("models--")
+        return repository_name
 
     @classmethod
     def _inspect_weight(cls, model_path: Path, file_path: Path) -> _WeightInspection:
